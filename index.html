@@ -512,10 +512,21 @@ AFRAME.registerComponent('training-v4', {
         this.forward.x
       );
 
-      const distance =
-        this.walkSpeeds[this.walkIndex] *
-        (sprint ? 1.8 : 1) *
-        dt;
+            const selectedSpeed =
+        this.walkSpeeds[this.walkIndex];
+
+      // Remember movement speed while on the ground.
+      if (this.grounded) {
+        this.takeoffSpeed =
+          selectedSpeed * (sprint ? 1.8 : 1);
+      }
+
+      // Keep that speed during the jump or fall.
+      const movementSpeed = this.grounded
+        ? selectedSpeed * (sprint ? 1.8 : 1)
+        : (this.takeoffSpeed ?? selectedSpeed);
+
+      const distance = movementSpeed * dt;
 
       this.rig.object3D.position
         .addScaledVector(
