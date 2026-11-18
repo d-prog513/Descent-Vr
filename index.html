@@ -267,13 +267,28 @@ AFRAME.registerComponent('training-v4', {
     this.grounded = true;
   },
 
-  jump: function () {
-    if (this.grounded && !document.hidden) {
+    jump: function () {
+    if (document.hidden) return;
+
+    const climbing = this.el.components['ledge-climb'];
+
+    // A while gripping becomes a ledge launch.
+    if (
+      this.inVR() &&
+      climbing &&
+      climbing.hands.some(hand => hand.grabbing)
+    ) {
+      climbing.launch(this);
+      return;
+    }
+
+    // Otherwise, keep the ordinary ground jump.
+    if (this.grounded) {
       this.velocityY = 4.2;
       this.grounded = false;
     }
   },
-
+  
   placeTarget: function () {
     this.view.object3D.getWorldPosition(this.head);
     this.view.object3D.getWorldQuaternion(this.q);
@@ -542,6 +557,27 @@ AFRAME.registerComponent('training-v4', {
           this.side,
           x * distance
         );
+    }
+
+        // Brief ledge-launch impulse.
+    // Stick steering continues to work separately.
+    if (this.grounded) {
+      this.launchTime = 0;
+      this.launchVX = 0;
+      this.launchVZ = 0;
+    } else if ((this.launchTime || 0) > 0) {
+      const pushTime = Math.min(dt, this.launchTime);
+
+      this.rig.object3D.position.x +=
+        (this.launchVX || 0) * pushTime;
+
+      this.rig.object3D.position.z +=
+        (this.launchVZ || 0) * pushTime;
+
+      this.launchTime = Math.max(
+        0,
+        this.launchTime - pushTime
+      );
     }
 
     // Create three fixed practice platforms once.
@@ -908,6 +944,58 @@ AFRAME.registerComponent('ledge-climb', {
 
     this.wasClimbing = false;
     this.cooldownUntil = 0;
+  },
+  
+  launch: function (training) {
+    if (!this.hands.some(hand => hand.grabbing)) {
+      return;
+    }
+
+    this.rig.object3D.updateWorldMatrix(true, true);
+    this.view.object3D.getWorldPosition(this.head);
+
+    // Push away from the center of the ledge.
+    const direction = new THREE.Vector3(
+      this.head.x - this.ledge.x,
+      0,
+      this.head.z - this.ledge.z
+    );
+
+    // Fallback if directly above the ledge's center.
+    if (direction.lengthSq() < 0.01) {
+      const rotation = new THREE.Quaternion();
+      this.view.object3D.getWorldQuaternion(rotation);
+
+      direction.set(0, 0, 1)
+        .applyQuaternion(rotation);
+
+      direction.y = 0;
+    }
+
+    if (direction.lengthSq() < 0.01) {
+      direction.set(0, 0, 1);
+    }
+
+    direction.normalize();
+
+    this.releaseAll();
+    this.cooldownUntil = performance.now() + 450;
+
+    training.grounded = false;
+    training.velocityY = 4.2;
+
+    // A brief horizontal push, separate from stick steering.
+    training.launchVX = direction.x * 3;
+    training.launchVZ = direction.z * 3;
+    training.launchTime = 0.30;
+
+    // Do not inherit an old sprint speed from before climbing.
+    training.takeoffSpeed =
+      training.walkSpeeds[training.walkIndex];
+
+    training.hands.forEach(hand => {
+      hand.ready = false;
+    });
   },
 
   releaseAll: function () {
