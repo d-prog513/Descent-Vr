@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Descent VR - Ability Test v5</title>
+<title>Descent VR - XR Aim Test v5.1</title>
 <script src="https://aframe.io/releases/1.8.0/aframe.min.js"></script>
 
 <style>
@@ -325,10 +325,10 @@ AFRAME.registerComponent('training-v4', {
     });
   },
 
-  damage: function () {
+  damage: function (amount = 20) {
     if (this.resetAt) return;
 
-    this.hp = Math.max(0, this.hp - 20);
+    this.hp = Math.max(0, this.hp - amount);
 
     if (this.hp === 0) {
       this.target.setAttribute('color', '#FFD54F');
@@ -872,7 +872,7 @@ AFRAME.registerComponent('training-v4', {
           : 'READY';
 
     const status =
-      'ABILITY TEST v5 | ' +
+      'XR AIM TEST v5.1 | ' +
       (vr ? 'VR' : 'DESKTOP') + '\n' +
       'Stamina ' +
       Math.ceil(this.stamina) +
@@ -896,7 +896,7 @@ AFRAME.registerComponent('training-v4', {
         'WASD: move | Space: jump | Shift: sprint\n' +
         'Drag mouse: look | Click: short-range punch\n' +
         'R: reset orb | Aim with center +\n' +
-        'F: returning knife | H: hints | Ability Test v5');
+        'F: returning knife | H: hints | XR Aim Test v5.1');
     }
   }
 });
@@ -1323,7 +1323,7 @@ AFRAME.registerComponent('ability-test', {
     this.rig = document.querySelector('#rig');
     this.handSamples = ['#left', '#right'].map(selector => ({
       el: document.querySelector(selector), previous: new THREE.Vector3(),
-      ready: false, inside: false, nextHit: 0
+      ready: false, inside: false, armed: true, nextHit: 0
     }));
 
     this.status = document.createElement('a-text');
@@ -1376,9 +1376,31 @@ AFRAME.registerComponent('ability-test', {
     this.knifeRoot.visible = false;
     this.el.object3D.add(this.knifeRoot);
     this.bladeForward = new THREE.Vector3(0, 0, -1);
+    this.aimMatrix = new THREE.Matrix4();
+    this.aimOrigin = new THREE.Vector3();
+    this.aimDirection = new THREE.Vector3();
+    this.aimEnd = new THREE.Vector3();
+    this.previousWorld = new THREE.Vector3();
+    this.punchDirection = new THREE.Vector3();
+    this.punchBox = this.targetBox.clone().expandByScalar(0.10);
+    this.orbSphere = new THREE.Sphere(new THREE.Vector3(), 0.18);
+    this.throwRequested = false;
+    this.contactHintAt = 0;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+    this.aimLine = new THREE.Line(geometry,
+      new THREE.LineBasicMaterial({color: 0x55ddff, transparent: true, opacity: 0.55}));
+    this.aimLine.frustumCulled = false;
+    this.aimLine.visible = false;
+    this.el.object3D.add(this.aimLine);
+    this.aimDot = new THREE.Mesh(new THREE.SphereGeometry(0.022, 8, 6),
+      new THREE.MeshBasicMaterial({color: 0x55ddff}));
+    this.aimDot.visible = false;
+    this.el.object3D.add(this.aimDot);
+
 
     this.right.addEventListener('triggerdown', () => {
-      if (this.el.is('vr-mode')) this.throwKnife();
+      if (this.el.is('vr-mode')) this.throwRequested = true;
     });
     this.right.addEventListener('thumbstickdown', () => {
       if (this.el.is('vr-mode')) this.toggleHints();
@@ -1386,7 +1408,7 @@ AFRAME.registerComponent('ability-test', {
     window.addEventListener('keydown', event => {
       if (event.repeat || this.el.is('vr-mode')) return;
       if (event.target.closest && event.target.closest('input,textarea,[contenteditable]')) return;
-      if (event.code === 'KeyF') { event.preventDefault(); this.throwKnife(); }
+      if (event.code === 'KeyF') { event.preventDefault(); this.throwRequested = true; }
       if (event.code === 'KeyH') { event.preventDefault(); this.toggleHints(); }
     });
     ['enter-vr', 'exit-vr'].forEach(name => this.el.addEventListener(name, () => this.cancelKnife()));
@@ -1395,6 +1417,75 @@ AFRAME.registerComponent('ability-test', {
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) this.cancelKnife();
     });
+  },
+
+  readAim: function (origin, direction) {
+    if (!this.el.is('vr-mode')) {
+      this.rig.object3D.updateWorldMatrix(true, true);
+      this.view.object3D.getWorldPosition(origin);
+      this.view.object3D.getWorldQuaternion(this.quaternion);
+      direction.set(0, 0, -1).applyQuaternion(this.quaternion).normalize();
+      return true;
+    }
+    const xr = this.el.renderer.xr;
+    const session = xr.getSession();
+    const frame = xr.getFrame ? xr.getFrame() : this.el.frame;
+    const tracked = this.el.systems['tracked-controls'];
+    const referenceSpace = tracked && tracked.referenceSpace ?
+      tracked.referenceSpace : xr.getReferenceSpace();
+    if (!session || session.visibilityState !== 'visible' || !frame || !referenceSpace) return false;
+    const source = Array.from(session.inputSources).find(input =>
+      input.handedness === 'right' && input.targetRayMode === 'tracked-pointer' && !input.hand);
+    if (!source || !source.targetRaySpace) return false;
+    let pose;
+    try { pose = frame.getPose(source.targetRaySpace, referenceSpace); }
+    catch (error) { return false; }
+    if (!pose) return false;
+    // XR poses are relative to the tracking origin; apply the locomotion parent once.
+    const parent = this.right.object3D.parent;
+    if (!parent) return false;
+    parent.updateWorldMatrix(true, false);
+    this.aimMatrix.fromArray(pose.transform.matrix);
+    this.aimMatrix.premultiply(parent.matrixWorld);
+    origin.setFromMatrixPosition(this.aimMatrix);
+    direction.set(0, 0, -1).transformDirection(this.aimMatrix);
+    return true;
+  },
+
+  segmentSphereDistance: function (start, direction, length, sphere) {
+    if (sphere.containsPoint(start)) return 0;
+    this.ray.set(start, direction);
+    const hit = this.ray.intersectSphere(sphere, this.point);
+    if (!hit) return Infinity;
+    const distance = start.distanceTo(hit);
+    return distance <= length + 0.0001 ? distance : Infinity;
+  },
+
+  updateAimGuide: function (training, valid) {
+    const visible = valid && this.hints;
+    this.aimLine.visible = visible;
+    this.aimDot.visible = visible;
+    if (!visible) return;
+    let distance = 9;
+    if (this.hp > 0) distance = Math.min(distance,
+      this.segmentDistance(this.aimOrigin, this.aimDirection, 9, this.targetBox));
+    if (training.hp > 0 && !training.resetAt) {
+      training.target.object3D.getWorldPosition(this.orbSphere.center);
+      distance = Math.min(distance,
+        this.segmentSphereDistance(this.aimOrigin, this.aimDirection, 9, this.orbSphere));
+    }
+    (training.practicePlatforms || []).forEach(platform => {
+      this.box.min.set(platform.x - platform.width / 2, 0, platform.z - platform.depth / 2);
+      this.box.max.set(platform.x + platform.width / 2, platform.top, platform.z + platform.depth / 2);
+      distance = Math.min(distance, this.box.containsPoint(this.aimOrigin) ? 0 :
+        this.segmentDistance(this.aimOrigin, this.aimDirection, 9, this.box));
+    });
+    this.aimEnd.copy(this.aimOrigin).addScaledVector(this.aimDirection, distance);
+    const attribute = this.aimLine.geometry.attributes.position;
+    attribute.setXYZ(0, this.aimOrigin.x, this.aimOrigin.y, this.aimOrigin.z);
+    attribute.setXYZ(1, this.aimEnd.x, this.aimEnd.y, this.aimEnd.z);
+    attribute.needsUpdate = true;
+    this.aimDot.position.copy(this.aimEnd);
   },
 
   toggleHints: function () {
@@ -1408,9 +1499,13 @@ AFRAME.registerComponent('ability-test', {
     if (climbing) climbing.updateGripVisuals();
     this.lastHit = 'Hints ' + (this.hints ? 'ON' : 'OFF');
     this.feedbackUntil = this.clock + 1.5;
+    if (!this.hints) { this.aimLine.visible = false; this.aimDot.visible = false; }
   },
 
   cancelKnife: function () {
+    this.throwRequested = false;
+    if (this.aimLine) this.aimLine.visible = false;
+    if (this.aimDot) this.aimDot.visible = false;
     this.state = 'READY';
     this.cooldown = 0;
     this.flightAge = 0;
@@ -1427,11 +1522,11 @@ AFRAME.registerComponent('ability-test', {
       const training = this.el.components['training-v4'];
       if (!training || !training.hands.some(hand => hand.el === this.right && hand.connected)) return;
     }
-    const source = vr ? this.right : this.view;
-    this.rig.object3D.updateWorldMatrix(true, true);
-    source.object3D.getWorldPosition(this.origin);
-    source.object3D.getWorldQuaternion(this.quaternion);
-    this.direction.set(0, 0, -1).applyQuaternion(this.quaternion).normalize();
+    if (!this.readAim(this.origin, this.direction)) {
+      this.lastHit = 'XR AIM UNAVAILABLE - try again when tracking returns';
+      this.feedbackUntil = this.clock + 1.5;
+      return;
+    }
     this.knifeRoot.position.copy(this.origin);
     this.velocity.copy(this.direction).multiplyScalar(10);
     this.knifeRoot.quaternion.setFromUnitVectors(this.bladeForward, this.direction);
@@ -1475,8 +1570,14 @@ AFRAME.registerComponent('ability-test', {
       const length = Math.min(10 * dt, 9 - this.distanceTravelled);
       this.direction.copy(this.velocity).normalize();
       const position = this.knifeRoot.position;
-      const targetDistance = this.hp > 0 && !this.hitThisThrow ?
+      let targetDistance = this.hp > 0 && !this.hitThisThrow ?
         this.segmentDistance(position, this.direction, length, this.targetBox) : Infinity;
+      let hitKind = 'dummy';
+      if (!this.hitThisThrow && training.hp > 0 && !training.resetAt) {
+        training.target.object3D.getWorldPosition(this.orbSphere.center);
+        const orbDistance = this.segmentSphereDistance(position, this.direction, length, this.orbSphere);
+        if (orbDistance < targetDistance) { targetDistance = orbDistance; hitKind = 'orb'; }
+      }
       let wallDistance = Infinity;
       (training.practicePlatforms || []).forEach(platform => {
         this.box.min.set(platform.x - platform.width / 2, 0, platform.z - platform.depth / 2);
@@ -1489,7 +1590,13 @@ AFRAME.registerComponent('ability-test', {
       if (Number.isFinite(targetDistance) && targetDistance < wallDistance) {
         position.addScaledVector(this.direction, targetDistance);
         this.hitThisThrow = true;
-        this.damageDummy(25, 'KNIFE');
+        if (hitKind === 'orb') {
+          training.damage(25);
+          this.lastHit = 'ORB KNIFE HIT -25';
+          this.feedbackUntil = this.clock + 1.5;
+        } else {
+          this.damageDummy(25, 'KNIFE');
+        }
         this.state = 'RETURNING';
       } else if (Number.isFinite(wallDistance)) {
         position.addScaledVector(this.direction, Math.max(0, wallDistance - 0.025));
@@ -1530,6 +1637,12 @@ AFRAME.registerComponent('ability-test', {
     const dt = delta / 1000;
     this.clock += dt;
     this.cooldown = Math.max(0, this.cooldown - dt);
+    const aimValid = this.readAim(this.aimOrigin, this.aimDirection);
+    this.updateAimGuide(training, aimValid);
+    if (this.throwRequested) {
+      this.throwRequested = false;
+      this.throwKnife();
+    }
     this.stepKnife(dt, training);
     if (this.resetAt && this.clock >= this.resetAt) {
       this.resetAt = 0;
@@ -1545,16 +1658,40 @@ AFRAME.registerComponent('ability-test', {
     this.handSamples.forEach(sample => {
       const tracked = training.hands.find(hand => hand.el === sample.el);
       if (!this.el.is('vr-mode') || !tracked || !tracked.connected) { sample.ready = false; return; }
-      const local = sample.el.object3D.position;
-      sample.el.object3D.getWorldPosition(this.next);
+      const object = sample.el.object3D;
+      const local = object.position;
+      object.updateWorldMatrix(true, false);
+      object.getWorldPosition(this.next);
       this.targetBox.clampPoint(this.next, this.point);
-      const touching = this.point.distanceTo(this.next) < 0.10;
+      const contactDistance = this.point.distanceTo(this.next);
+      const touching = contactDistance <= 0.10;
       const gripping = climbing && climbing.hands.some(hand => hand.el === sample.el && hand.grabbing);
-      if (sample.ready && !gripping && touching && !sample.inside &&
-          local.distanceTo(sample.previous) / dt >= 0.45 && this.clock >= sample.nextHit) {
-        this.damageDummy(20, 'PUNCH');
-        sample.nextHit = this.clock + 0.35;
+      if (contactDistance > 0.18) sample.armed = true;
+      if (sample.ready && !gripping) {
+        // Apply today's parent transform to the previous local sample, excluding
+        // rig locomotion/snap turning from the measured physical fist movement.
+        this.previousWorld.copy(sample.previous).applyMatrix4(object.parent.matrixWorld);
+        this.punchDirection.copy(this.next).sub(this.previousWorld);
+        const travel = this.punchDirection.length();
+        const speed = local.distanceTo(sample.previous) / dt;
+        let swept = this.punchBox.containsPoint(this.previousWorld) || touching;
+        if (!swept && travel > 0.00001) {
+          this.punchDirection.multiplyScalar(1 / travel);
+          swept = Number.isFinite(this.segmentDistance(this.previousWorld,
+            this.punchDirection, travel, this.punchBox));
+        }
+        if (sample.armed && swept && speed >= 0.45 && this.clock >= sample.nextHit && this.hp > 0) {
+          this.damageDummy(20, 'PUNCH');
+          sample.nextHit = this.clock + 0.35;
+          sample.armed = false;
+        } else if (touching && this.hints && this.hp > 0 && this.clock >= this.contactHintAt &&
+                   this.clock >= sample.nextHit) {
+          this.lastHit = 'HAND CONTACT - pull back, then make a small punch';
+          this.feedbackUntil = this.clock + 0.8;
+          this.contactHintAt = this.clock + 1;
+        }
       }
+      if (gripping) sample.armed = false;
       sample.previous.copy(local);
       sample.ready = true;
       sample.inside = touching;
@@ -1563,7 +1700,7 @@ AFRAME.registerComponent('ability-test', {
     const holding = climbing && climbing.hands.some(hand => hand.grabbing);
     const state = holding ? 'HOLD | Stamina ' + Math.ceil(training.stamina) + '/100 (no drain)' : '';
     const knifeState = this.state === 'READY' && this.cooldown > 0 ? 'RECOVERING' : this.state;
-    let text = 'ABILITY TEST v5 | KNIFE ' + knifeState;
+    let text = 'XR AIM TEST v5.1 | KNIFE ' + knifeState;
     if (state) text += '\n' + state;
     if (this.clock < this.feedbackUntil) text += '\n' + this.lastHit;
     else if (this.hints) text += this.el.is('vr-mode') ?
@@ -1580,7 +1717,7 @@ AFRAME.registerComponent('ability-test', {
 
 <body>
 
-<div id="hud">Loading Ability Test v5...</div>
+<div id="hud">Loading XR Aim Test v5.1...</div>
 <div id="crosshair">+</div>
 
 <a-scene
@@ -1707,7 +1844,7 @@ AFRAME.registerComponent('ability-test', {
     align="center"
     width="4"
     color="white"
-    value="DESCENT VR\nABILITY TEST v5">
+    value="DESCENT VR\nXR AIM TEST v5.1">
   </a-text>
 
   <!-- Practice target -->
