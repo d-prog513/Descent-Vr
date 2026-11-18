@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Descent VR - Wrist Lab v6.2.5</title>
+<title>Descent VR - Wrist Lab v6.2.6</title>
 <script src="https://aframe.io/releases/1.8.0/aframe.min.js"></script>
 
 <style>
@@ -892,7 +892,9 @@ AFRAME.registerComponent('training-v4', {
 
     this.hands.forEach(hand => {
       const cutter = this.el.components['plasma-cutter'];
-      if (!vr || !hand.connected || (cutter && cutter.active && hand.el === this.right)) {
+      const climbingHand = climbing && climbing.hands.find(candidate => candidate.el === hand.el);
+      if (!vr || !hand.connected || (climbingHand && climbingHand.grabbing) ||
+          (cutter && cutter.blocksFist(hand.el))) {
         hand.ready = false;
         return;
       }
@@ -947,7 +949,7 @@ AFRAME.registerComponent('training-v4', {
           : 'READY';
 
     const status =
-      'WRIST LAB v6.2.5 | ' +
+      'WRIST LAB v6.2.6 | ' +
       (vr ? 'VR' : 'DESKTOP') + '\n' +
       'Stamina ' +
       Math.ceil(this.stamina) +
@@ -1425,7 +1427,7 @@ AFRAME.registerComponent('ability-test', {
 
     this.knifeRoot = new THREE.Group();
     this.knifeVisual = new THREE.Group();
-    const bladeMaterial = new THREE.MeshStandardMaterial({color: 0xe0f7ff, metalness: 0.45, roughness: 0.3});
+    const bladeMaterial = new THREE.MeshStandardMaterial({color: 0x28c7ff, emissive: 0x006eff, emissiveIntensity: 1.2, metalness: 0.35, roughness: 0.22});
     const blade = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.012, 0.26), bladeMaterial);
     blade.position.z = -0.12;
     this.knifeVisual.add(blade);
@@ -1434,7 +1436,7 @@ AFRAME.registerComponent('ability-test', {
     tip.position.z = -0.295;
     this.knifeVisual.add(tip);
     const handle = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.025, 0.13),
-      new THREE.MeshStandardMaterial({color: 0xffb74d}));
+      new THREE.MeshStandardMaterial({color: 0x10314a, emissive: 0x0055cc, emissiveIntensity: 0.55}));
     handle.position.z = 0.07;
     this.knifeVisual.add(handle);
     this.knifeRoot.add(this.knifeVisual);
@@ -1892,6 +1894,49 @@ AFRAME.registerComponent('ability-test', {
     return distance <= length + 0.0001 ? distance : Infinity;
   },
 
+  beginKnifeReturn: function (training) {
+    if (this.state === 'RETURNING') return;
+    this.state = 'RETURNING';
+    this.knifeReturnHits = {dummy: false, orb: false};
+    this.knifeReturnBlocked = false;
+    const position = this.knifeRoot.position;
+    this.box.copy(this.targetBox).expandByScalar(0.025);
+    training.target.object3D.getWorldPosition(this.orbSphere.center);
+    this.knifeReturnArmed = {
+      dummy: !this.box.containsPoint(position),
+      orb: position.distanceTo(this.orbSphere.center) > this.orbSphere.radius + 0.025
+    };
+  },
+
+  stepKnifeReturnDamage: function (position, direction, length, training) {
+    if (this.knifeReturnBlocked || length < 0.000001) return;
+    if (Number.isFinite(this.blockingDistance(position, direction, length, training))) {
+      this.knifeReturnBlocked = true;
+      return;
+    }
+    const dummy = this.hp > 0 ? (this.targetBox.containsPoint(position) ? 0 :
+      this.segmentDistance(position, direction, length, this.targetBox)) : Infinity;
+    training.target.object3D.getWorldPosition(this.orbSphere.center);
+    const orb = training.hp > 0 && !training.resetAt ?
+      this.segmentSphereDistance(position, direction, length, this.orbSphere) : Infinity;
+    for (const kind of ['dummy', 'orb']) {
+      const distance = kind === 'dummy' ? dummy : orb;
+      if (!Number.isFinite(distance)) { this.knifeReturnArmed[kind] = true; continue; }
+      if (!this.knifeReturnArmed[kind] || this.knifeReturnHits[kind]) continue;
+      this.knifeReturnHits[kind] = true;
+      this.knifeReturnArmed[kind] = false;
+      if (kind === 'dummy') {
+        this.next.copy(position).addScaledVector(direction, distance);
+        this.damageDummy(12, 'KNIFE', this.next);
+        this.lastHit += ' | RETURN';
+      } else {
+        training.damage(12, 'knife');
+        this.lastHit = 'ORB KNIFE RETURN HIT -12';
+      }
+      this.feedbackUntil = this.clock + 1.5;
+    }
+  },
+
   stepKnife: function (dt, training) {
     if (this.state === 'READY') return;
     this.flightAge += dt;
@@ -1920,17 +1965,17 @@ AFRAME.registerComponent('ability-test', {
         } else {
           this.damageDummy(25, 'KNIFE');
         }
-        this.state = 'RETURNING';
+        this.beginKnifeReturn(training);
       } else if (Number.isFinite(wallDistance)) {
         position.addScaledVector(this.direction, Math.max(0, wallDistance - 0.025));
-        this.state = 'RETURNING';
+        this.beginKnifeReturn(training);
         this.hitFeedback('wall', position);
         this.lastHit = 'BLOCKED - knife returning';
         this.feedbackUntil = this.clock + 1;
       } else {
         position.addScaledVector(this.direction, length);
         this.distanceTravelled += length;
-        if (this.distanceTravelled >= 8.999) this.state = 'RETURNING';
+        if (this.distanceTravelled >= 8.999) this.beginKnifeReturn(training);
       }
     } else if (this.state === 'RETURNING') {
       const source = this.el.is('vr-mode') ? this.right : this.view;
@@ -1938,7 +1983,10 @@ AFRAME.registerComponent('ability-test', {
       source.object3D.getWorldPosition(this.origin);
       this.deltaVector.copy(this.origin).sub(this.knifeRoot.position);
       const distance = this.deltaVector.length();
-      if (distance <= Math.max(0.15, 14 * dt)) {
+      const catching = distance <= Math.max(0.15, 14 * dt);
+      this.direction.copy(this.deltaVector).normalize();
+      this.stepKnifeReturnDamage(this.knifeRoot.position, this.direction, catching ? distance : 14 * dt, training);
+      if (catching) {
         this.knifeRoot.visible = false;
         this.state = 'READY';
         this.cooldown = 0.45;
@@ -1986,7 +2034,7 @@ AFRAME.registerComponent('ability-test', {
       const tracked = training.hands.find(hand => hand.el === sample.el);
       const cutter = this.el.components['plasma-cutter'];
       if (!this.el.is('vr-mode') || !tracked || !tracked.connected ||
-          (cutter && cutter.active && sample.el === this.right)) { sample.ready = false; return; }
+          (cutter && cutter.blocksFist(sample.el))) { sample.ready = false; return; }
       const object = sample.el.object3D;
       const local = object.position;
       object.updateWorldMatrix(true, false);
@@ -2030,7 +2078,7 @@ AFRAME.registerComponent('ability-test', {
     const state = holding ? 'HOLD | Stamina ' + Math.ceil(training.stamina) + '/100 (grip costs 0)' : '';
     const knifeState = this.state === 'READY' && this.cooldown > 0 ? 'RECOVERING' : this.state;
     const cutter = this.el.components['plasma-cutter'];
-    let text = 'WRIST LAB v6.2.5 | ' + (cutter && cutter.active ?
+    let text = 'WRIST LAB v6.2.6 | ' + (cutter && cutter.active ?
       'CUTTER ' + cutter.state + (cutter.ignited ? ' ON' : ' OFF') +
       (cutter.guiding ? ' | TETHER -2/s' : '') +
       (cutter.state !== 'HELD' ? ' | ' + cutter.root.position.distanceTo(cutter.origin).toFixed(1) + 'm' : '') : 'KNIFE ' + knifeState);
@@ -2203,6 +2251,11 @@ AFRAME.registerComponent('plasma-cutter', {
     const climbing = this.el.components['ledge-climb'];
     return this.el.is('vr-mode') && climbing && climbing.hands.some(hand =>
       hand.el === this.right && (hand.held || hand.grabbing));
+  },
+
+  blocksFist: function (hand) {
+    // A remote cutter leaves the hand free. Grip already tucks a held cutter away.
+    return this.active && hand === this.right && this.state === 'HELD' && !this.isGripping();
   },
 
   toggleEquip: function () {
@@ -3026,7 +3079,7 @@ AFRAME.registerComponent('touch-controls', {
     if (this.sprintButton.textContent !== sprintText) this.sprintButton.textContent = sprintText;
     this.sprintButton.classList.toggle('active',this.sprint);
     this.sprintButton.setAttribute('aria-pressed',String(this.sprint));
-    const status = 'v6.2.5 | ' + (selected ? 'CUTTER' : 'KNIFE') + (away ? ' - ' + cutter.state : '') +
+    const status = 'v6.2.6 | ' + (selected ? 'CUTTER' : 'KNIFE') + (away ? ' - ' + cutter.state : '') +
       ' | ' + Math.ceil(training.stamina) + '%';
     if (this.status.textContent !== status) this.status.textContent = status;
   }
@@ -3421,7 +3474,7 @@ AFRAME.registerComponent('input-layout', {
 
 <body>
 
-<div id="hud">Loading Wrist Lab v6.2.5...</div>
+<div id="hud">Loading Wrist Lab v6.2.6...</div>
 <div id="crosshair">+</div>
 
 <a-scene
@@ -3539,7 +3592,7 @@ AFRAME.registerComponent('input-layout', {
     align="center"
     width="4"
     color="white"
-    value="DESCENT VR\nWRIST LAB v6.2.5">
+    value="DESCENT VR\nWRIST LAB v6.2.6">
   </a-text>
 
   <!-- Practice target -->
