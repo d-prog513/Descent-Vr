@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Descent VR - Wrist Lab v6.2.8</title>
+<title>Descent VR - Wrist Lab v6.2.9</title>
 <script src="https://aframe.io/releases/1.8.0/aframe.min.js"></script>
 
 <style>
@@ -949,7 +949,7 @@ AFRAME.registerComponent('training-v4', {
           : 'READY';
 
     const status =
-      'WRIST LAB v6.2.8 | ' +
+      'WRIST LAB v6.2.9 | ' +
       (vr ? 'VR' : 'DESKTOP') + '\n' +
       'Stamina ' +
       Math.ceil(this.stamina) +
@@ -1386,6 +1386,7 @@ AFRAME.registerComponent('ability-test', {
     this.targetBox = new THREE.Box3();
     this.summit = {x: 5, z: -5.2, top: 2.65};
     this.right = document.querySelector('#right');
+    this.left = document.querySelector('#left');
     this.view = document.querySelector('#view');
     this.rig = document.querySelector('#rig');
     this.handSamples = ['#left', '#right'].map(selector => ({
@@ -1473,7 +1474,8 @@ AFRAME.registerComponent('ability-test', {
     this.initFeedback();
     this.right.addEventListener('triggerdown', () => {
       this.unlockAudio();
-      if (this.el.is('vr-mode')) this.requestPrimary();
+      const cutter = this.el.components['plasma-cutter'];
+      if (this.el.is('vr-mode') && !(cutter && cutter.active)) this.requestPrimary();
     });
     window.addEventListener('keydown', event => {
       if (event.repeat || this.el.is('vr-mode')) return;
@@ -1741,7 +1743,7 @@ AFRAME.registerComponent('ability-test', {
 
   findSoundButton: function () { return null; },
 
-  readAim: function (origin, direction) {
+  readAim: function (origin, direction, handedness) {
     if (!this.el.is('vr-mode')) {
       this.rig.object3D.updateWorldMatrix(true, true);
       this.view.object3D.getWorldPosition(origin);
@@ -1757,14 +1759,15 @@ AFRAME.registerComponent('ability-test', {
       tracked.referenceSpace : xr.getReferenceSpace();
     if (!session || session.visibilityState !== 'visible' || !frame || !referenceSpace) return false;
     const source = Array.from(session.inputSources).find(input =>
-      input.handedness === 'right' && input.targetRayMode === 'tracked-pointer' && !input.hand);
+      input.handedness === (handedness || 'right') && input.targetRayMode === 'tracked-pointer' && !input.hand);
     if (!source || !source.targetRaySpace) return false;
     let pose;
     try { pose = frame.getPose(source.targetRaySpace, referenceSpace); }
     catch (error) { return false; }
     if (!pose) return false;
     // XR poses are relative to the tracking origin; apply the locomotion parent once.
-    const parent = this.right.object3D.parent;
+    const controller = handedness === 'left' ? this.left : this.right;
+    const parent = controller && controller.object3D.parent;
     if (!parent) return false;
     parent.updateWorldMatrix(true, false);
     this.aimMatrix.fromArray(pose.transform.matrix);
@@ -2038,7 +2041,8 @@ AFRAME.registerComponent('ability-test', {
     this.clock += dt;
     this.cooldown = Math.max(0, this.cooldown - dt);
     this.updateFeedback(dt);
-    const aimValid = this.readAim(this.aimOrigin, this.aimDirection);
+    const owner = this.el.components['plasma-cutter'];
+    const aimValid = this.readAim(this.aimOrigin, this.aimDirection, owner && owner.active ? owner.owningHand : 'right');
     this.updateAimGuide(training, aimValid);
     if (this.throwRequested) {
       this.throwRequested = false;
@@ -2104,8 +2108,8 @@ AFRAME.registerComponent('ability-test', {
     const state = holding ? 'HOLD | Stamina ' + Math.ceil(training.stamina) + '/100 (grip costs 0)' : '';
     const knifeState = this.state === 'READY' && this.cooldown > 0 ? 'RECOVERING' : this.state;
     const cutter = this.el.components['plasma-cutter'];
-    let text = 'WRIST LAB v6.2.8 | ' + (cutter && cutter.active ?
-      'CUTTER ' + cutter.state + (cutter.ignited ? ' ON' : ' OFF') +
+    let text = 'WRIST LAB v6.2.9 | ' + (cutter && cutter.active ?
+      'CUTTER ' + (cutter.owningHand || 'right').toUpperCase() + ' ' + cutter.state + (cutter.ignited ? ' ON' : ' OFF') +
       (cutter.guiding ? ' | TETHER -2/s' : '') +
       (cutter.state !== 'HELD' ? ' | ' + cutter.root.position.distanceTo(cutter.origin).toFixed(1) + 'm' : '') : 'KNIFE ' + knifeState);
     text += ' | STA ' + Math.ceil(training.stamina) + '%';
@@ -2125,6 +2129,13 @@ AFRAME.registerComponent('ability-test', {
 AFRAME.registerComponent('plasma-cutter', {
   init: function () {
     this.right = document.querySelector('#right');
+    this.left = document.querySelector('#left');
+    this.owningHand = 'right';
+    this.handoffCandidate = null;
+    this.handoffUntil = 0;
+    this.handoffOwnerPosition = new THREE.Vector3();
+    this.handoffOtherPosition = new THREE.Vector3();
+    this.handoffAim = new THREE.Vector3();
     this.view = document.querySelector('#view');
     this.rig = document.querySelector('#rig');
     this.controlStart = new THREE.Vector3();
@@ -2216,6 +2227,7 @@ AFRAME.registerComponent('plasma-cutter', {
       new THREE.MeshBasicMaterial({color: 0xffba55}));
     marker.position.set(0.043, 0.01, -0.07);
     this.root.add(marker);
+    this.ownerMarker = marker;
     const grip = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.055, 0.12),
       new THREE.MeshStandardMaterial({color: 0x172936, roughness: 0.9}));
     grip.position.z = 0.035;
@@ -2246,10 +2258,30 @@ AFRAME.registerComponent('plasma-cutter', {
       if (y < 0) this.toggleEquip();
       else this.toggleBlade();
     });
-    this.right.addEventListener('gripdown', () => this.beginGripThrow());
-    this.right.addEventListener('gripup', () => this.endGripThrow());
-    this.right.addEventListener('triggerup', () => this.endPress());
-    this.right.addEventListener('controllerdisconnected', () => this.cancel());
+    [this.right, this.left].forEach(hand => {
+      hand.addEventListener('gripdown', () => {
+        if (!this.el.is('vr-mode')) return;
+        if (hand === this.owner()) this.beginGripThrow();
+        else if (this.active && this.state === 'HELD') this.handoffCandidate = hand;
+      });
+      hand.addEventListener('gripup', () => {
+        if (this.handoffCandidate === hand) this.handoffCandidate = null;
+        if (hand === this.owner()) this.endGripThrow();
+      });
+      hand.addEventListener('triggerdown', () => {
+        const menu = this.el.components['pause-menu'];
+        if (!this.el.is('vr-mode') || !this.active || hand !== this.owner() || (menu && menu.opened)) return;
+        const fx = this.feedback();
+        fx.unlockAudio();
+        if (!fx.readAim(this.origin, this.aim, this.owningHand)) { this.cancel(); return; }
+        this.beginPress(); this.primaryAction(this.origin, this.aim);
+      });
+      hand.addEventListener('triggerup', () => { if (hand === this.owner()) this.endPress(); });
+      hand.addEventListener('controllerdisconnected', () => {
+        if (hand === this.owner()) { this.cancel(); this.owningHand = 'right'; if (this.ownerMarker) this.ownerMarker.material.color.setHex(0xffba55); }
+        if (this.handoffCandidate === hand) this.handoffCandidate = null;
+      });
+    });
     window.addEventListener('keydown', event => {
       if (this.el.is('vr-mode') || event.repeat) return;
       if (event.target.closest && event.target.closest('input,textarea,[contenteditable],button')) return;
@@ -2267,9 +2299,43 @@ AFRAME.registerComponent('plasma-cutter', {
       if (event.code === 'KeyE') this.endPress();
       this.controlKeys.delete(event.code);
     });
-    ['enter-vr', 'exit-vr'].forEach(name => this.el.addEventListener(name, () => this.cancel()));
+    ['enter-vr', 'exit-vr'].forEach(name => this.el.addEventListener(name, () => { this.owningHand = 'right'; if (this.ownerMarker) this.ownerMarker.material.color.setHex(0xffba55); this.cancel(); }));
     window.addEventListener('blur', () => this.cancel());
     document.addEventListener('visibilitychange', () => { if (document.hidden) this.cancel(); });
+  },
+
+  owner: function () { return this.owningHand === 'left' ? this.left : this.right; },
+
+  tryHandoff: function () {
+    const candidate = this.handoffCandidate, menu = this.el.components['pause-menu'];
+    if (!candidate || !this.el.is('vr-mode') || document.hidden || (menu && menu.opened) ||
+        !this.active || this.state !== 'HELD' || this.cooldown > 0 || this.clock < this.handoffUntil) return false;
+    const owner = this.owner();
+    if (candidate === owner) { this.handoffCandidate = null; return false; }
+    const climbing = this.el.components['ledge-climb'], training = this.el.components['training-v4'];
+    if (!climbing || !training) return false;
+    const from = climbing.hands.find(hand => hand.el === owner);
+    const to = climbing.hands.find(hand => hand.el === candidate);
+    if (!from || !to || !from.held || !to.held || from.grabbing || to.grabbing ||
+        !training.hands.some(hand => hand.el === owner && hand.connected) ||
+        !training.hands.some(hand => hand.el === candidate && hand.connected)) return false;
+    owner.object3D.updateWorldMatrix(true, false); candidate.object3D.updateWorldMatrix(true, false);
+    owner.object3D.getWorldPosition(this.handoffOwnerPosition);
+    candidate.object3D.getWorldPosition(this.handoffOtherPosition);
+    if (this.handoffOwnerPosition.distanceTo(this.handoffOtherPosition) > 0.22) return false;
+    const nextOwner = candidate === this.left ? 'left' : 'right';
+    if (!this.feedback().readAim(this.handoffOtherPosition, this.handoffAim, nextOwner)) return false;
+    this.owningHand = nextOwner;
+    this.clearTrigger();
+    this.handoffUntil = this.clock + 0.35;
+    this.armSamples.length = 0; this.armVelocity.set(0,0,0);
+    this.historyReady = this.remoteHistory = this.gestureReady = false;
+    this.controlKeys.clear();
+    this.feedback().throwRequested = false;
+    if (this.ownerMarker) this.ownerMarker.material.color.setHex(this.owningHand === 'left' ? 0x8eafff : 0xffba55);
+    this.feedback().playEffect('catch');
+    this.message('CUTTER -> ' + this.owningHand.toUpperCase() + ' HAND - release grips; this hand owns tether');
+    return true;
   },
 
   feedback: function () { return this.el.components['ability-test']; },
@@ -2284,17 +2350,17 @@ AFRAME.registerComponent('plasma-cutter', {
   isGripping: function () {
     const climbing = this.el.components['ledge-climb'];
     return this.el.is('vr-mode') && climbing && climbing.hands.some(hand =>
-      hand.el === this.right && (hand.held || hand.grabbing));
+      hand.el === this.owner() && (hand.held || hand.grabbing));
   },
 
   blocksFist: function (hand) {
     // A remote cutter leaves the hand free. Grip already tucks a held cutter away.
-    return this.active && hand === this.right && this.state === 'HELD' && !this.isGripping();
+    return this.active && hand === this.owner() && this.state === 'HELD' && !this.isGripping();
   },
 
-  isClimbingRight: function () {
+  isOwnerClimbing: function () {
     const climbing = this.el.components['ledge-climb'];
-    return !!climbing && climbing.hands.some(hand => hand.el === this.right && hand.grabbing);
+    return !!climbing && climbing.hands.some(hand => hand.el === this.owner() && hand.grabbing);
   },
 
   beginGripThrow: function () {
@@ -2302,9 +2368,9 @@ AFRAME.registerComponent('plasma-cutter', {
     const menu = this.el.components['pause-menu'];
     if (!this.el.is('vr-mode') || document.hidden || (menu && menu.opened) ||
         !this.active || this.state !== 'HELD' || !this.ignited || this.bladeAmount < 0.9 ||
-        this.cooldown > 0 || this.triggerHeld || this.isClimbingRight()) return;
+        this.cooldown > 0 || this.clock < this.handoffUntil || this.triggerHeld || this.isOwnerClimbing()) return;
     const training = this.el.components['training-v4'];
-    if (!training || !training.hands.some(hand => hand.el === this.right && hand.connected)) return;
+    if (!training || !training.hands.some(hand => hand.el === this.owner() && hand.connected)) return;
     this.gripThrowArmed = true;
     this.gripThrowAt = this.clock;
     this.gripThrowStart.copy(this.handLocal);
@@ -2316,14 +2382,14 @@ AFRAME.registerComponent('plasma-cutter', {
     const menu = this.el.components['pause-menu'];
     if (!armed || !this.el.is('vr-mode') || document.hidden || (menu && menu.opened) ||
         !this.active || this.state !== 'HELD' || !this.ignited || this.bladeAmount < 0.9 ||
-        this.cooldown > 0 || this.triggerHeld || this.isClimbingRight()) return;
+        this.cooldown > 0 || this.clock < this.handoffUntil || this.triggerHeld || this.isOwnerClimbing()) return;
     const latest = this.armSamples[this.armSamples.length - 1];
     if (this.clock - this.gripThrowAt < 0.10 || this.armSamples.length < 3 || !latest ||
         this.clock - latest.t > 0.05 || this.armVelocity.length() < 0.85 ||
         this.handLocal.distanceTo(this.gripThrowStart) < 0.08) return;
     const training = this.el.components['training-v4'], fx = this.feedback();
-    if (!training || !training.hands.some(hand => hand.el === this.right && hand.connected) ||
-        !fx || !fx.readAim(this.origin, this.aim)) return;
+    if (!training || !training.hands.some(hand => hand.el === this.owner() && hand.connected) ||
+        !fx || !fx.readAim(this.origin, this.aim, this.owningHand)) return;
     this.root.position.copy(this.origin);
     this.root.quaternion.setFromRotationMatrix(fx.aimMatrix).normalize();
     this.historyReady = false;
@@ -2373,7 +2439,7 @@ AFRAME.registerComponent('plasma-cutter', {
     if (!this.active || !fx || document.hidden) return;
     fx.unlockAudio();
     if (this.state !== 'HELD') { this.message('Recall cutter before changing blade power'); return; }
-    if (this.isGripping()) { this.message('Release right grip before using cutter'); return; }
+    if (this.isGripping()) { this.message('Release holding-hand grip before using cutter'); return; }
     this.ignited = !this.ignited;
     fx.playEffect(this.ignited ? 'ignite' : 'extinguish');
     this.historyReady = false;
@@ -2410,7 +2476,7 @@ AFRAME.registerComponent('plasma-cutter', {
   sampleArm: function () {
     if (!this.el.is('vr-mode')) { this.armVelocity.set(0, 0, 0); return; }
     this.handLocal.copy(this.origin);
-    this.right.object3D.parent.worldToLocal(this.handLocal);
+    this.owner().object3D.parent.worldToLocal(this.handLocal);
     this.armSamples.push({t: this.clock, p: this.handLocal.clone()});
     while (this.armSamples.length > 2 && this.clock - this.armSamples[0].t > 0.11) this.armSamples.shift();
     const first = this.armSamples[0];
@@ -2419,9 +2485,9 @@ AFRAME.registerComponent('plasma-cutter', {
   },
 
   launchGesture: function () {
-    this.right.object3D.parent.getWorldQuaternion(this.quaternion);
+    this.owner().object3D.parent.getWorldQuaternion(this.quaternion);
     this.direction.copy(this.armVelocity).applyQuaternion(this.quaternion).normalize();
-    this.launchSpeed = Math.min(this.armVelocity.length(), 14);
+    this.launchSpeed = Math.min(this.armVelocity.length() * 1.5, 14);
     this.launchRemote(true);
   },
 
@@ -2461,6 +2527,7 @@ AFRAME.registerComponent('plasma-cutter', {
 
   clearTrigger: function () {
     this.gripThrowArmed = false;
+    this.handoffCandidate = null;
     this.triggerHeld = false;
     this.guiding = false;
     this.gestureReady = false;
@@ -2483,7 +2550,7 @@ AFRAME.registerComponent('plasma-cutter', {
       this.message('Grip, swing, release grip to throw; trigger is for tether');
       return;
     }
-    if (this.isGripping()) { this.clearTrigger(); this.message('Release right grip before throwing'); return; }
+    if (this.isGripping()) { this.clearTrigger(); this.message('Release holding-hand grip before throwing'); return; }
     if (!this.ignited || this.bladeAmount < 0.9) {
       this.clearTrigger(); this.message('Ignite cutter first: R-stick DOWN / desktop V'); return;
     }
@@ -2613,7 +2680,7 @@ AFRAME.registerComponent('plasma-cutter', {
   },
 
   captureControl: function () {
-    const parent = this.right.object3D.parent;
+    const parent = this.owner().object3D.parent;
     this.controlStart.copy(this.origin);
     parent.worldToLocal(this.controlStart);
     this.controlBlade.copy(this.root.position);
@@ -2643,7 +2710,7 @@ AFRAME.registerComponent('plasma-cutter', {
     this.staminaSpent += staminaBefore - training.stamina;
     if (training.stamina <= 0) { this.recall('STAMINA EMPTY - free safety retrieve', true); return; }
     if (!this.gestureReady) this.captureControl();
-    const parent = this.right.object3D.parent;
+    const parent = this.owner().object3D.parent;
     parent.getWorldQuaternion(this.parentQuaternion);
     this.inverseQuaternion.copy(this.parentQuaternion).invert();
     this.handLocalQuaternion.copy(this.inverseQuaternion).multiply(this.handWorldQuaternion);
@@ -2760,7 +2827,7 @@ AFRAME.registerComponent('plasma-cutter', {
   },
 
   stepMelee: function (dt, training) {
-    const parent = this.right.object3D.parent;
+    const parent = this.owner().object3D.parent;
     this.base.copy(this.root.position).addScaledVector(this.aim, 0.15);
     this.tip.copy(this.root.position).addScaledVector(this.aim, 1.05);
     this.localBase.copy(this.base);
@@ -2943,10 +3010,11 @@ AFRAME.registerComponent('plasma-cutter', {
       this.stopHum();
       return;
     }
-    if (!fx.readAim(this.origin, this.aim)) { this.cancel(); return; }
+    if (!fx.readAim(this.origin, this.aim, this.owningHand)) { this.cancel(); return; }
+    if (this.tryHandoff() && !fx.readAim(this.origin, this.aim, this.owningHand)) { this.cancel(); return; }
     const vr = this.el.is('vr-mode');
     this.sampleArm();
-    if (vr && this.isClimbingRight()) this.gripThrowArmed = false;
+    if (vr && this.isOwnerClimbing()) this.gripThrowArmed = false;
     if (vr) this.handWorldQuaternion.setFromRotationMatrix(fx.aimMatrix).normalize();
     else this.view.object3D.getWorldQuaternion(this.handWorldQuaternion);
     if (!vr) {
@@ -3191,7 +3259,7 @@ AFRAME.registerComponent('touch-controls', {
     if (this.sprintButton.textContent !== sprintText) this.sprintButton.textContent = sprintText;
     this.sprintButton.classList.toggle('active',this.sprint);
     this.sprintButton.setAttribute('aria-pressed',String(this.sprint));
-    const status = 'v6.2.8 | ' + (selected ? 'CUTTER' : 'KNIFE') + (away ? ' - ' + cutter.state : '') +
+    const status = 'v6.2.9 | ' + (selected ? 'CUTTER' : 'KNIFE') + (away ? ' - ' + cutter.state : '') +
       ' | ' + Math.ceil(training.stamina) + '%';
     if (this.status.textContent !== status) this.status.textContent = status;
   }
@@ -3308,7 +3376,7 @@ AFRAME.registerComponent('pause-menu', {
   toggle: function () { this.setOpen(!this.opened); },
 
   help: function () {
-    return 'QUEST\nLeft stick: move | Right stick: turn\nSprint works in every movement direction\nA: jump / ledge launch | Grips: climb\nR-stick UP: equip | DOWN: blade power\nCutter: grip, swing, release grip to throw\nTrigger: tether cutter / throw knife\nRelease trigger: hover | Grip during tether: park\nTwo quick trigger taps: retrieve\nR-stick click: pause / resume\nAim/grip hints: pause menu\nEmpty left wrist + look 0.8s: pause\n\nPHONE\nMove pad + drag to look; Sprint toggles\nHotbar: Knife/Cutter | Drag THROW to aim\nSecondary: Swing/Punch or Retrieve\n\nDESKTOP\nWASD move | Arrows look | Space jump | Shift sprint\nC equip | V blade | E tether | G retrieve\nI/K depth | J/L roll | Click swing\nP / Escape: pause\n\nTether costs 2 stamina/s; hover and retrieval are free.\nObject transfer and left-trigger ownership are not in this build yet.';
+    return 'QUEST\nLeft stick: move | Right stick: turn\nSprint works in every movement direction\nA: jump / ledge launch | Grips: climb\nR-stick UP: equip | DOWN: blade power\nCutter: holding grip + swing + release throws\nHands close + both grips: handoff\nHolding-hand trigger: tether | R-trigger: knife\nRelease trigger: hover | Grip during tether: park\nTwo quick trigger taps: retrieve\nR-stick click: pause / resume\nAim/grip hints: pause menu\nEmpty left wrist + look 0.8s: pause\n\nPHONE\nMove pad + drag to look; Sprint toggles\nHotbar: Knife/Cutter | Drag THROW to aim\nSecondary: Swing/Punch or Retrieve\n\nDESKTOP\nWASD move | Arrows look | Space jump | Shift sprint\nC equip | V blade | E tether | G retrieve\nI/K depth | J/L roll | Click swing\nP / Escape: pause\n\nTether costs 2 stamina/s; hover and retrieval are free.\nObject transfer and left-trigger ownership are not in this build yet.';
   },
 
   setOpen: function (value) {
@@ -3586,7 +3654,7 @@ AFRAME.registerComponent('input-layout', {
 
 <body>
 
-<div id="hud">Loading Wrist Lab v6.2.8...</div>
+<div id="hud">Loading Wrist Lab v6.2.9...</div>
 <div id="crosshair">+</div>
 
 <a-scene
@@ -3597,6 +3665,7 @@ AFRAME.registerComponent('input-layout', {
   touch-controls
   pause-menu
   input-layout
+  ascent-run
   background="color: #182333">
 
   <a-light
@@ -3704,7 +3773,7 @@ AFRAME.registerComponent('input-layout', {
     align="center"
     width="4"
     color="white"
-    value="DESCENT VR\nWRIST LAB v6.2.8">
+    value="DESCENT VR\nWRIST LAB v6.2.9">
   </a-text>
 
   <!-- Practice target -->
@@ -3758,5 +3827,93 @@ AFRAME.registerComponent('input-layout', {
   </a-entity>
 
 </a-scene>
+
+<script>
+AFRAME.registerComponent('ascent-run', {
+  init: function () {
+    this.view = document.querySelector('#view');
+    this.head = new THREE.Vector3();
+    this.points = [new THREE.Vector3(3,2.25,-0.6), new THREE.Vector3(3,2.9,-3),
+      new THREE.Vector3(5.5,4.1,-4.8), new THREE.Vector3(0,1.6,0)];
+    this.markers = this.points.map((point,index) => {
+      const entity = document.createElement('a-entity');
+      entity.setAttribute('position',{x:point.x,y:point.y,z:point.z});
+      const ring = document.createElement('a-torus');
+      ring.setAttribute('radius',0.24); ring.setAttribute('radius-tubular',0.018);
+      ring.setAttribute('segments-radial',24); ring.setAttribute('segments-tubular',6);
+      const core = document.createElement('a-sphere');
+      core.setAttribute('radius',0.06); core.setAttribute('segments-width',8); core.setAttribute('segments-height',6);
+      const label = document.createElement('a-text');
+      label.setAttribute('value',index === 3 ? 'HOME' : String(index+1));
+      label.setAttribute('align','center'); label.setAttribute('width',1.1); label.setAttribute('position','0 0.35 0');
+      entity.appendChild(ring); entity.appendChild(core); entity.appendChild(label); this.el.appendChild(entity);
+      return {entity,ring,core,label};
+    });
+    this.board = document.createElement('a-text');
+    this.board.setAttribute('position','-1.2 1.9 -1.6'); this.board.setAttribute('align','center');
+    this.board.setAttribute('width',2.1); this.board.setAttribute('color','#bdefff');
+    this.el.appendChild(this.board);
+    this.best = null;
+    try { const saved=Number(localStorage.getItem('descent-ascent-best-v1')); if (saved>0 && Number.isFinite(saved)) this.best=saved; } catch(error) {}
+    this.resetRun();
+  },
+
+  resetRun: function () {
+    this.index=0; this.elapsed=0; this.running=false; this.finished=false; this.restartAt=0;
+    this.lastBoard=''; this.paint(); this.drawBoard();
+  },
+
+  paint: function () {
+    this.markers.forEach((marker,index) => {
+      const color = index<this.index ? '#80ed99' : index===this.index ? '#62e8ff' : '#506376';
+      marker.ring.setAttribute('material',{color:color,shader:'flat',opacity:index<=this.index?0.95:0.25,transparent:true});
+      marker.core.setAttribute('material',{color:color,shader:'flat'});
+      marker.label.setAttribute('color',color);
+    });
+  },
+
+  drawBoard: function () {
+    const best=this.best===null?'--':this.best.toFixed(1)+'s';
+    const state=this.finished?'COMPLETE '+this.elapsed.toFixed(1)+'s':
+      this.running?(this.index===3?'RETURN TO HOME':'NEXT: BEACON '+(this.index+1))+' | '+this.elapsed.toFixed(1)+'s':
+      'Touch beacon 1 to start';
+    const text='ASCENT RUN\n'+state+'\nBest '+best+'\nClimb 1 > 2 > 3, then HOME';
+    if(text!==this.lastBoard){this.board.setAttribute('value',text);this.lastBoard=text;}
+  },
+
+  collect: function () {
+    if(this.finished)return;
+    if(!this.running){this.running=true;this.elapsed=0;}
+    this.index++;
+    if(this.index===this.points.length){
+      this.finished=true;this.running=false;this.restartAt=8;
+      if(this.best===null||this.elapsed<this.best){
+        this.best=this.elapsed;
+        try{localStorage.setItem('descent-ascent-best-v1',String(this.best));}catch(error){}
+      }
+    }
+    const fx=this.el.components['ability-test'];
+    if(fx){fx.playEffect('catch');fx.lastHit=this.finished?'ASCENT RUN COMPLETE - '+this.elapsed.toFixed(1)+'s':
+      'BEACON '+this.index+'/3'+(this.index===3?' - RETURN HOME':'');fx.feedbackUntil=fx.clock+2;}
+    this.paint();this.drawBoard();
+  },
+
+  tick: function (time,delta) {
+    const pause=this.el.components['pause-menu'];
+    if(!delta||delta>100||document.hidden||(pause&&pause.opened))return;
+    if(this.el.is('vr-mode')){const session=this.el.renderer.xr.getSession();if(session&&session.visibilityState!=='visible')return;}
+    const dt=delta/1000;
+    this.view.object3D.getWorldPosition(this.head);
+    this.board.object3D.lookAt(this.head);
+    if(this.finished){this.restartAt-=dt;if(this.restartAt<=0)this.resetRun();return;}
+    if(this.running)this.elapsed+=dt;
+    const marker=this.markers[this.index];
+    marker.entity.object3D.lookAt(this.head);
+    if(this.head.distanceTo(this.points[this.index])<=0.65)this.collect();
+    if(this.running)this.drawBoard();
+  }
+});
+</script>
+
 </body>
 </html>
