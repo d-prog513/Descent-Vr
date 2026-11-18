@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Descent VR - Impact Audio v5.2</title>
+<title>Descent VR - Cutter Lab v6.0</title>
 <script src="https://aframe.io/releases/1.8.0/aframe.min.js"></script>
 
 <style>
@@ -334,13 +334,13 @@ AFRAME.registerComponent('training-v4', {
     });
   },
 
-  damage: function (amount = 20) {
+  damage: function (amount = 20, source) {
     if (this.resetAt) return;
 
     this.hp = Math.max(0, this.hp - amount);
     const feedback = this.el.components['ability-test'];
     if (feedback && feedback.hitFeedback) {
-      feedback.hitFeedback(amount === 25 ? 'knife' : 'punch', this.target.object3D.position);
+      feedback.hitFeedback(source || (amount === 25 ? 'knife' : 'punch'), this.target.object3D.position);
     }
 
 
@@ -361,6 +361,8 @@ AFRAME.registerComponent('training-v4', {
   },
 
   desktopPunch: function () {
+    const cutter = this.el.components['plasma-cutter'];
+    if (cutter && cutter.active) { cutter.desktopSwing(); return; }
     const now = performance.now();
 
     if (now < this.nextClick) return;
@@ -539,7 +541,8 @@ AFRAME.registerComponent('training-v4', {
       if (this.stamina === 0) {
         this.exhausted = true;
       }
-    } else if (this.grounded) {
+    } else if (this.grounded && !(this.el.components['plasma-cutter'] &&
+        this.el.components['plasma-cutter'].guiding)) {
       this.stamina = Math.min(
         100,
         this.stamina + 25 * dt
@@ -831,7 +834,8 @@ AFRAME.registerComponent('training-v4', {
     );
 
     this.hands.forEach(hand => {
-      if (!vr || !hand.connected) {
+      const cutter = this.el.components['plasma-cutter'];
+      if (!vr || !hand.connected || (cutter && cutter.active && hand.el === this.right)) {
         hand.ready = false;
         return;
       }
@@ -886,7 +890,7 @@ AFRAME.registerComponent('training-v4', {
           : 'READY';
 
     const status =
-      'IMPACT AUDIO v5.2 | ' +
+      'CUTTER LAB v6.0 | ' +
       (vr ? 'VR' : 'DESKTOP') + '\n' +
       'Stamina ' +
       Math.ceil(this.stamina) +
@@ -910,7 +914,7 @@ AFRAME.registerComponent('training-v4', {
         'WASD: move | Space: jump | Shift: sprint\n' +
         'Drag mouse: look | Click: short-range punch\n' +
         'R: reset orb | Aim with center +\n' +
-        'F: returning knife | H: hints | Impact Audio v5.2');
+        'C: cutter/knife | V: blade on/off\nF: throw (hold: guide, new tap: recall) | H: hints\nClick: punch / cutter swing | Cutter Lab v6.0');
     }
   }
 });
@@ -1416,7 +1420,7 @@ AFRAME.registerComponent('ability-test', {
     this.initFeedback();
     this.right.addEventListener('triggerdown', () => {
       this.unlockAudio();
-      if (this.el.is('vr-mode')) this.throwRequested = true;
+      if (this.el.is('vr-mode')) this.requestPrimary();
     });
     this.right.addEventListener('thumbstickdown', () => {
       if (this.el.is('vr-mode')) this.toggleHints();
@@ -1424,7 +1428,7 @@ AFRAME.registerComponent('ability-test', {
     window.addEventListener('keydown', event => {
       if (event.repeat || this.el.is('vr-mode')) return;
       if (event.target.closest && event.target.closest('input,textarea,[contenteditable]')) return;
-      if (event.code === 'KeyF') { event.preventDefault(); this.throwRequested = true; }
+      if (event.code === 'KeyF') { event.preventDefault(); this.requestPrimary(); }
       if (event.code === 'KeyH') { event.preventDefault(); this.toggleHints(); }
     });
     ['enter-vr', 'exit-vr'].forEach(name => this.el.addEventListener(name, () => this.cancelKnife()));
@@ -1433,6 +1437,12 @@ AFRAME.registerComponent('ability-test', {
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) this.cancelKnife();
     });
+  },
+
+  requestPrimary: function () {
+    this.throwRequested = true;
+    const cutter = this.el.components['plasma-cutter'];
+    if (cutter && cutter.active) cutter.beginPress();
   },
 
   initFeedback: function () {
@@ -1615,6 +1625,14 @@ AFRAME.registerComponent('ability-test', {
       } else if (kind === 'knife') {
         tone(640, 1040, 0.085, 0.14, 'triangle');
         tone(1280, 820, 0.12, 0.055, 'sine');
+      } else if (kind === 'ignite') {
+        tone(120, 850, 0.22, 0.12, 'triangle');
+        tone(60, 220, 0.18, 0.08, 'sine');
+      } else if (kind === 'extinguish') {
+        tone(650, 85, 0.18, 0.09, 'triangle');
+      } else if (kind === 'plasma') {
+        tone(180, 70, 0.12, 0.16, 'triangle');
+        tone(1700, 540, 0.13, 0.065, 'sine');
       } else if (kind === 'catch') {
         tone(440, 660, 0.075, 0.085, 'sine');
       }
@@ -1723,15 +1741,17 @@ AFRAME.registerComponent('ability-test', {
     this.aimLine.visible = visible;
     this.aimDot.visible = visible;
     if (!visible) return;
-    let distance = 9;
+    const cutter = this.el.components['plasma-cutter'];
+    const range = cutter && cutter.active ? 12 : 9;
+    let distance = range;
     if (this.hp > 0) distance = Math.min(distance,
-      this.segmentDistance(this.aimOrigin, this.aimDirection, 9, this.targetBox));
+      this.segmentDistance(this.aimOrigin, this.aimDirection, range, this.targetBox));
     if (training.hp > 0 && !training.resetAt) {
       training.target.object3D.getWorldPosition(this.orbSphere.center);
       distance = Math.min(distance,
-        this.segmentSphereDistance(this.aimOrigin, this.aimDirection, 9, this.orbSphere));
+        this.segmentSphereDistance(this.aimOrigin, this.aimDirection, range, this.orbSphere));
     }
-    distance = Math.min(distance, this.blockingDistance(this.aimOrigin, this.aimDirection, 9, training));
+    distance = Math.min(distance, this.blockingDistance(this.aimOrigin, this.aimDirection, range, training));
     const menu = this.findSoundButton(this.aimOrigin, this.aimDirection, training);
     if (menu) distance = Math.min(distance, menu.distance);
     const guideColor = menu ? 0xffd166 : 0x55ddff;
@@ -1786,7 +1806,14 @@ AFRAME.registerComponent('ability-test', {
     }
     const training = this.el.components['training-v4'];
     const menu = this.findSoundButton(this.origin, this.direction, training);
-    if (menu) { this.soundAction(menu.action); return; }
+    if (menu) {
+      this.soundAction(menu.action);
+      const cutter = this.el.components['plasma-cutter'];
+      if (cutter) cutter.clearTrigger();
+      return;
+    }
+    const cutter = this.el.components['plasma-cutter'];
+    if (cutter && cutter.active) { cutter.primaryAction(this.origin, this.direction); return; }
     if (this.state !== 'READY' || this.cooldown > 0) return;
     this.knifeRoot.position.copy(this.origin);
     this.velocity.copy(this.direction).multiplyScalar(10);
@@ -1799,11 +1826,11 @@ AFRAME.registerComponent('ability-test', {
     this.knifeRoot.visible = true;
   },
 
-  damageDummy: function (amount, source) {
+  damageDummy: function (amount, source, contact) {
     if (this.hp <= 0) return;
     this.hp = Math.max(0, this.hp - amount);
-    this.hitFeedback(source === 'KNIFE' ? 'knife' : 'punch',
-      source === 'KNIFE' ? this.knifeRoot.position : this.next);
+    this.hitFeedback(source === 'PLASMA' ? 'plasma' : source === 'KNIFE' ? 'knife' : 'punch',
+      contact || (source === 'KNIFE' ? this.knifeRoot.position : this.next));
     this.lastHit = source + ' HIT -' + amount;
     this.feedbackUntil = this.clock + 1.5;
     this.flashUntil = this.clock + 0.18;
@@ -1915,7 +1942,9 @@ AFRAME.registerComponent('ability-test', {
     const climbing = this.el.components['ledge-climb'];
     this.handSamples.forEach(sample => {
       const tracked = training.hands.find(hand => hand.el === sample.el);
-      if (!this.el.is('vr-mode') || !tracked || !tracked.connected) { sample.ready = false; return; }
+      const cutter = this.el.components['plasma-cutter'];
+      if (!this.el.is('vr-mode') || !tracked || !tracked.connected ||
+          (cutter && cutter.active && sample.el === this.right)) { sample.ready = false; return; }
       const object = sample.el.object3D;
       const local = object.position;
       object.updateWorldMatrix(true, false);
@@ -1956,14 +1985,17 @@ AFRAME.registerComponent('ability-test', {
     });
 
     const holding = climbing && climbing.hands.some(hand => hand.grabbing);
-    const state = holding ? 'HOLD | Stamina ' + Math.ceil(training.stamina) + '/100 (no drain)' : '';
+    const state = holding ? 'HOLD | Stamina ' + Math.ceil(training.stamina) + '/100 (grip costs 0)' : '';
     const knifeState = this.state === 'READY' && this.cooldown > 0 ? 'RECOVERING' : this.state;
-    let text = 'IMPACT AUDIO v5.2 | KNIFE ' + knifeState;
+    const cutter = this.el.components['plasma-cutter'];
+    let text = 'CUTTER LAB v6.0 | ' + (cutter && cutter.active ?
+      'CUTTER ' + cutter.state + (cutter.ignited ? ' ON' : ' OFF') +
+      (cutter.guiding ? ' | GUIDING -2/s' : '') : 'KNIFE ' + knifeState);
     text += ' | SFX ' + (this.muted ? 'MUTED' : Math.round(this.soundVolume * 100) + '%');
     if (state) text += '\n' + state;
     if (this.clock < this.feedbackUntil) text += '\n' + this.lastHit;
     else if (this.hints) text += this.el.is('vr-mode') ?
-      '\nRight trigger: knife | R-stick click: hints' : '\nF: knife | H: hints';
+      '\nR-stick UP: equip/stow | DOWN: blade | Click: hints' : '\nC: equip/stow | V: blade | F: throw/hold guide/tap recall | H: hints';
     if (text !== this.lastStatus) {
       this.status.setAttribute('value', text);
       this.lastStatus = text;
@@ -1972,17 +2004,479 @@ AFRAME.registerComponent('ability-test', {
 });
 </script>
 
+
+<script>
+AFRAME.registerComponent('plasma-cutter', {
+  init: function () {
+    this.right = document.querySelector('#right');
+    this.view = document.querySelector('#view');
+    this.rig = document.querySelector('#rig');
+    this.active = false;
+    this.ignited = false;
+    this.state = 'HELD';
+    this.clock = 0;
+    this.cooldown = 0;
+    this.bladeAmount = 0;
+    this.triggerHeld = false;
+    this.pressLaunched = false;
+    this.pressAt = 0;
+    this.guiding = false;
+    this.gestureReady = false;
+    this.stickReady = true;
+    this.historyReady = false;
+    this.flightAge = 0;
+    this.swingAge = -1;
+    this.nextSwing = 0;
+    this.armed = {dummy: false, orb: false};
+    this.nextHit = {dummy: 0, orb: 0};
+    this.contact = {dummy: new THREE.Vector3(), orb: new THREE.Vector3()};
+    ['origin', 'aim', 'direction', 'desired', 'velocity', 'end', 'start',
+      'tip', 'base', 'localTip', 'localBase', 'oldTip', 'oldBase', 'sweepStart',
+      'sweepTip', 'sweepDirection', 'point', 'handLocal', 'gestureStart',
+      'gesturePrevious', 'gestureDelta', 'pullDirection', 'offset', 'home',
+      'orbCenter'].forEach(name => { this[name] = new THREE.Vector3(); });
+    this.quaternion = new THREE.Quaternion();
+    this.inverseQuaternion = new THREE.Quaternion();
+    this.up = new THREE.Vector3(0, 1, 0);
+    this.forward = new THREE.Vector3(0, 0, -1);
+    this.targetBox = new THREE.Box3();
+    this.orbSphere = new THREE.Sphere(new THREE.Vector3(), 0.23);
+    this.root = new THREE.Group();
+    const metal = new THREE.MeshStandardMaterial({color: 0x697d90, metalness: 0.7, roughness: 0.3});
+    const hilt = new THREE.Mesh(new THREE.CylinderGeometry(0.034, 0.038, 0.24, 10), metal);
+    hilt.rotation.x = Math.PI / 2;
+    this.root.add(hilt);
+    const emitter = new THREE.Mesh(new THREE.CylinderGeometry(0.048, 0.038, 0.045, 10), metal);
+    emitter.rotation.x = Math.PI / 2;
+    emitter.position.z = -0.13;
+    this.root.add(emitter);
+    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.055, 0.12),
+      new THREE.MeshStandardMaterial({color: 0x172936, roughness: 0.9}));
+    grip.position.z = 0.035;
+    this.root.add(grip);
+    this.beam = new THREE.Group();
+    this.beam.position.z = -0.15;
+    const core = new THREE.Mesh(new THREE.CylinderGeometry(0.013, 0.013, 0.90, 8),
+      new THREE.MeshBasicMaterial({color: 0xe8ffff}));
+    core.rotation.x = Math.PI / 2;
+    core.position.z = -0.45;
+    this.beam.add(core);
+    const glow = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.92, 8),
+      new THREE.MeshBasicMaterial({color: 0x23ddff, transparent: true, opacity: 0.25, depthWrite: false}));
+    glow.rotation.x = Math.PI / 2;
+    glow.position.z = -0.45;
+    this.beam.add(glow);
+    this.root.add(this.beam);
+    this.root.visible = false;
+    this.el.object3D.add(this.root);
+
+    this.right.addEventListener('thumbstickmoved', event => {
+      if (!this.el.is('vr-mode')) return;
+      const x = event.detail.x, y = event.detail.y;
+      if (Math.abs(x) < 0.28 && Math.abs(y) < 0.28) this.stickReady = true;
+      if (Math.abs(x) > 0.45) { this.stickReady = false; return; }
+      if (!this.stickReady || Math.abs(x) > 0.25 || Math.abs(y) < 0.78) return;
+      this.stickReady = false;
+      if (y < 0) this.toggleEquip();
+      else this.toggleBlade();
+    });
+    this.right.addEventListener('triggerup', () => this.endPress());
+    this.right.addEventListener('controllerdisconnected', () => this.cancel());
+    window.addEventListener('keydown', event => {
+      if (this.el.is('vr-mode') || event.repeat) return;
+      if (event.target.closest && event.target.closest('input,textarea,[contenteditable],button')) return;
+      if (event.code === 'KeyC') { event.preventDefault(); this.toggleEquip(); }
+      if (event.code === 'KeyV') { event.preventDefault(); this.toggleBlade(); }
+    });
+    window.addEventListener('keyup', event => { if (event.code === 'KeyF') this.endPress(); });
+    ['enter-vr', 'exit-vr'].forEach(name => this.el.addEventListener(name, () => this.cancel()));
+    window.addEventListener('blur', () => this.cancel());
+    document.addEventListener('visibilitychange', () => { if (document.hidden) this.cancel(); });
+  },
+
+  feedback: function () { return this.el.components['ability-test']; },
+
+  message: function (text) {
+    const fx = this.feedback();
+    if (!fx) return;
+    fx.lastHit = text;
+    fx.feedbackUntil = fx.clock + 2;
+  },
+
+  isGripping: function () {
+    const climbing = this.el.components['ledge-climb'];
+    return this.el.is('vr-mode') && climbing && climbing.hands.some(hand =>
+      hand.el === this.right && (hand.held || hand.grabbing));
+  },
+
+  toggleEquip: function () {
+    const fx = this.feedback();
+    if (!fx || document.hidden) return;
+    fx.unlockAudio();
+    if (this.state !== 'HELD') { this.recall('Recall first, then flick UP to stow'); return; }
+    if (fx.state !== 'READY' || fx.cooldown > 0 || this.cooldown > 0) {
+      this.message('Wait for the weapon to finish returning'); return;
+    }
+    if (this.ignited) fx.playEffect('extinguish');
+    this.active = !this.active;
+    this.ignited = false;
+    this.bladeAmount = 0;
+    this.historyReady = false;
+    this.clearTrigger();
+    this.stopHum();
+    this.message(this.active ? 'CUTTER EQUIPPED - flick R-stick DOWN to ignite' : 'CUTTER STOWED - knife ready');
+  },
+
+  toggleBlade: function () {
+    const fx = this.feedback();
+    if (!this.active || !fx || document.hidden) return;
+    fx.unlockAudio();
+    if (this.state !== 'HELD') { this.message('Recall cutter before changing blade power'); return; }
+    if (this.isGripping()) { this.message('Release right grip before using cutter'); return; }
+    this.ignited = !this.ignited;
+    fx.playEffect(this.ignited ? 'ignite' : 'extinguish');
+    this.historyReady = false;
+    this.armed.dummy = this.armed.orb = false;
+    this.message(this.ignited ? 'BLADE ON - swing, or trigger to throw' : 'BLADE OFF');
+  },
+
+  beginPress: function () {
+    if (!this.active) return;
+    this.triggerHeld = true;
+    this.pressAt = this.clock;
+    this.pressLaunched = false;
+  },
+
+  endPress: function () {
+    if (!this.triggerHeld) return;
+    const tapRecall = this.active && this.state === 'OUTBOUND' &&
+      !this.pressLaunched && this.clock - this.pressAt < 0.22;
+    this.clearTrigger();
+    if (tapRecall) this.recall('CUTTER RECALLED');
+  },
+
+  clearTrigger: function () {
+    this.triggerHeld = false;
+    this.guiding = false;
+    this.gestureReady = false;
+    this.pressLaunched = false;
+  },
+
+  primaryAction: function (origin, direction) {
+    if (!this.active || this.state !== 'HELD') return;
+    if (this.isGripping()) { this.clearTrigger(); this.message('Release right grip before throwing'); return; }
+    if (!this.ignited || this.bladeAmount < 0.9) {
+      this.clearTrigger(); this.message('Ignite cutter first: R-stick DOWN / desktop V'); return;
+    }
+    if (this.cooldown > 0) { this.clearTrigger(); return; }
+    this.root.position.copy(origin);
+    if (!this.el.is('vr-mode')) {
+      this.view.object3D.getWorldQuaternion(this.quaternion);
+      this.offset.set(0.22, -0.20, -0.18).applyQuaternion(this.quaternion);
+      this.root.position.add(this.offset);
+    }
+    this.swingAge = -1;
+    this.direction.copy(direction).normalize();
+    this.root.quaternion.setFromUnitVectors(this.forward, this.direction);
+    this.state = 'OUTBOUND';
+    this.flightAge = 0;
+    this.historyReady = false;
+    this.pressLaunched = true;
+    this.message('CUTTER THROWN - hold trigger to guide; new quick tap recalls');
+  },
+
+  recall: function (text) {
+    if (this.state !== 'OUTBOUND') return;
+    this.state = 'RETURNING';
+    this.clearTrigger();
+    if (text) this.message(text);
+  },
+
+  cancel: function () {
+    this.state = 'HELD';
+    this.ignited = false;
+    this.bladeAmount = 0;
+    this.historyReady = false;
+    this.flightAge = 0;
+    this.cooldown = 0.3;
+    this.swingAge = -1;
+    this.clearTrigger();
+    this.root.visible = false;
+    this.beam.visible = false;
+    this.stopHum();
+  },
+
+  stopHum: function () {
+    if (!this.hum) return;
+    try { this.hum.oscillator.stop(); } catch (error) {}
+    this.hum.oscillator.disconnect();
+    this.hum.gain.disconnect();
+    this.hum = null;
+  },
+
+  updateHum: function (audible) {
+    const fx = this.feedback();
+    const ctx = fx && fx.audioContext;
+    if (!audible || !ctx || ctx.state !== 'running' || fx.muted || fx.soundVolume <= 0) {
+      this.stopHum(); return;
+    }
+    if (!this.hum) {
+      try {
+        const oscillator = ctx.createOscillator();
+        const gain = ctx.createGain();
+        oscillator.type = 'triangle';
+        oscillator.frequency.value = 105;
+        gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+        gain.gain.linearRampToValueAtTime(0.023, ctx.currentTime + 0.08);
+        oscillator.connect(gain);
+        gain.connect(fx.masterGain);
+        oscillator.start();
+        this.hum = {oscillator: oscillator, gain: gain};
+      } catch (error) { this.hum = null; }
+    }
+  },
+
+  desktopSwing: function () {
+    if (!this.active || this.state !== 'HELD' || !this.ignited || this.clock < this.nextSwing) return;
+    this.swingAge = 0;
+    this.nextSwing = this.clock + 0.45;
+  },
+
+  updateGuidance: function (dt, training) {
+    this.guiding = this.triggerHeld && this.clock - this.pressAt >= 0.22 && !this.isGripping();
+    if (!this.guiding) { this.gestureReady = false; return; }
+    if (training.stamina <= 0) { this.recall('STAMINA EMPTY - free recall'); return; }
+    training.stamina = Math.max(0, training.stamina - 2 * dt);
+    if (training.stamina <= 0) { this.recall('STAMINA EMPTY - free recall'); return; }
+    this.desired.copy(this.aim);
+    if (this.el.is('vr-mode')) {
+      this.handLocal.copy(this.right.object3D.position);
+      if (!this.gestureReady) {
+        this.gestureStart.copy(this.handLocal);
+        this.gesturePrevious.copy(this.handLocal);
+        this.pullDirection.copy(this.view.object3D.position).sub(this.handLocal);
+        this.pullDirection.y = 0;
+        if (this.pullDirection.lengthSq() < 0.01) {
+          this.right.object3D.parent.getWorldQuaternion(this.inverseQuaternion);
+          this.inverseQuaternion.invert();
+          this.pullDirection.copy(this.aim).negate().applyQuaternion(this.inverseQuaternion);
+          this.pullDirection.y = 0;
+        }
+        if (this.pullDirection.lengthSq() < 0.001) this.pullDirection.set(0, 0, 1);
+        this.pullDirection.normalize();
+        this.gestureAt = this.clock;
+        this.gestureReady = true;
+      }
+      this.gestureDelta.copy(this.handLocal).sub(this.gesturePrevious);
+      const pullSpeed = this.gestureDelta.dot(this.pullDirection) / dt;
+      this.gestureDelta.copy(this.handLocal).sub(this.gestureStart);
+      const pullDistance = this.gestureDelta.dot(this.pullDirection);
+      if (pullDistance > 0.18 && pullSpeed > 0.35 && this.clock - this.gestureAt < 1.3) {
+        this.recall('PULL GESTURE - returning'); return;
+      }
+      // Physical hand offsets are local to the rig: walking/turning are not gestures.
+      this.offset.copy(this.gestureDelta);
+      this.offset.addScaledVector(this.pullDirection, -this.offset.dot(this.pullDirection));
+      this.offset.clampLength(0, 0.30);
+      this.right.object3D.parent.getWorldQuaternion(this.quaternion);
+      this.offset.applyQuaternion(this.quaternion);
+      this.desired.addScaledVector(this.offset, 1.8).normalize();
+      this.gesturePrevious.copy(this.handLocal);
+      if (this.clock - this.gestureAt > 1.3) {
+        this.gestureStart.copy(this.handLocal);
+        this.gestureAt = this.clock;
+      }
+    }
+    const angle = this.direction.angleTo(this.desired);
+    const step = Math.min(1, (2.8 * dt) / Math.max(angle, 0.00001));
+    this.quaternion.setFromUnitVectors(this.direction, this.desired);
+    // Quaternion interpolation avoids a zero vector during a 180-degree turn.
+    this.inverseQuaternion.identity().slerp(this.quaternion, step);
+    this.direction.applyQuaternion(this.inverseQuaternion).normalize();
+  },
+
+  testBladeSegment: function (base, tip, training, hits) {
+    const fx = this.feedback();
+    this.sweepDirection.copy(tip).sub(base);
+    const length = this.sweepDirection.length();
+    if (length < 0.0001) return;
+    this.sweepDirection.multiplyScalar(1 / length);
+    let wall = fx.blockingDistance(base, this.sweepDirection, length, training);
+    let dummy = Infinity, orb = Infinity;
+    if (fx.hp > 0) {
+      this.targetBox.copy(fx.targetBox).expandByScalar(0.04);
+      dummy = this.targetBox.containsPoint(base) ? 0 :
+        fx.segmentDistance(base, this.sweepDirection, length, this.targetBox);
+    }
+    if (training.hp > 0 && !training.resetAt) {
+      training.target.object3D.getWorldPosition(this.orbSphere.center);
+      orb = fx.segmentSphereDistance(base, this.sweepDirection, length, this.orbSphere);
+    }
+    if (dummy < wall && dummy <= orb) {
+      hits.dummy = true;
+      this.contact.dummy.copy(base).addScaledVector(this.sweepDirection, dummy);
+    } else if (orb < wall) {
+      hits.orb = true;
+      this.contact.orb.copy(base).addScaledVector(this.sweepDirection, orb);
+    }
+  },
+
+  damageTarget: function (kind, amount, training) {
+    const fx = this.feedback();
+    if (kind === 'dummy') fx.damageDummy(amount, 'PLASMA', this.contact.dummy);
+    else {
+      training.damage(amount, 'plasma');
+      this.message('ORB PLASMA HIT -' + amount);
+    }
+  },
+
+  stepMelee: function (dt, training) {
+    const parent = this.right.object3D.parent;
+    this.base.copy(this.root.position).addScaledVector(this.aim, 0.15);
+    this.tip.copy(this.root.position).addScaledVector(this.aim, 1.05);
+    this.localBase.copy(this.base);
+    this.localTip.copy(this.tip);
+    // Both controller and desktop camera are direct children of the same rig.
+    parent.worldToLocal(this.localBase);
+    parent.worldToLocal(this.localTip);
+    if (!this.historyReady) {
+      this.oldBase.copy(this.localBase);
+      this.oldTip.copy(this.localTip);
+      this.historyReady = true;
+      this.armed.dummy = this.armed.orb = false;
+      return;
+    }
+    const travel = this.localTip.distanceTo(this.oldTip);
+    const speed = travel / dt;
+    const hits = {dummy: false, orb: false};
+    const steps = Math.min(16, Math.max(1, Math.ceil(travel / 0.04)));
+    for (let index = 0; index <= steps; index++) {
+      const fraction = index / steps;
+      this.sweepStart.copy(this.oldBase).lerp(this.localBase, fraction);
+      this.sweepTip.copy(this.oldTip).lerp(this.localTip, fraction);
+      parent.localToWorld(this.sweepStart);
+      parent.localToWorld(this.sweepTip);
+      this.testBladeSegment(this.sweepStart, this.sweepTip, training, hits);
+    }
+    ['dummy', 'orb'].forEach(kind => {
+      if (!hits[kind]) this.armed[kind] = true;
+      if (hits[kind] && this.armed[kind] && speed >= 0.45 && this.clock >= this.nextHit[kind]) {
+        this.damageTarget(kind, 30, training);
+        this.armed[kind] = false;
+        this.nextHit[kind] = this.clock + 0.4;
+      }
+    });
+    this.oldBase.copy(this.localBase);
+    this.oldTip.copy(this.localTip);
+  },
+
+  stepFlight: function (dt, training) {
+    const fx = this.feedback();
+    this.flightAge += dt;
+    // Recall is non-damaging and ignores scenery, just like the existing knife return.
+    if (this.flightAge > 15) { this.cancel(); this.message('CUTTER RECOVERED SAFELY'); return; }
+    if (this.state === 'OUTBOUND') {
+      this.updateGuidance(dt, training);
+      if (this.state !== 'OUTBOUND') return;
+      const length = 9 * dt;
+      this.start.copy(this.root.position);
+      this.end.copy(this.start).addScaledVector(this.direction, length + 1.05);
+      const hits = {dummy: false, orb: false};
+      this.testBladeSegment(this.start, this.end, training, hits);
+      let kind = hits.dummy ? 'dummy' : hits.orb ? 'orb' : null;
+      if (kind) {
+        this.root.position.copy(this.start).addScaledVector(this.direction,
+          Math.max(0, this.start.distanceTo(this.contact[kind]) - 1.05));
+        this.damageTarget(kind, 25, training);
+        this.recall();
+      } else {
+        const wall = fx.blockingDistance(this.start, this.direction, length + 1.05, training);
+        if (Number.isFinite(wall)) {
+          this.point.copy(this.start).addScaledVector(this.direction, wall);
+          this.root.position.copy(this.start).addScaledVector(this.direction, Math.max(0, wall - 1.075));
+          fx.hitFeedback('wall', this.point);
+          this.recall('CUTTER BLOCKED - returning');
+        } else {
+          this.root.position.addScaledVector(this.direction, length);
+          if (this.root.position.distanceTo(this.origin) >= 12 || this.flightAge > 12)
+            this.recall('CUTTER RANGE LIMIT - returning');
+        }
+      }
+      this.root.quaternion.setFromUnitVectors(this.forward, this.direction);
+    } else {
+      this.home.copy(this.origin);
+      this.velocity.copy(this.home).sub(this.root.position);
+      const distance = this.velocity.length();
+      if (distance <= Math.max(0.16, 15 * dt)) {
+        this.root.position.copy(this.home);
+        this.state = 'HELD';
+        this.cooldown = 0.4;
+        this.clearTrigger();
+        this.historyReady = false;
+        fx.hitFeedback('catch', this.home);
+        this.message('CUTTER CAUGHT');
+      } else {
+        this.velocity.multiplyScalar(1 / distance);
+        this.root.position.addScaledVector(this.velocity, 15 * dt);
+        this.root.quaternion.setFromUnitVectors(this.forward, this.velocity);
+      }
+    }
+  },
+
+  tick: function (time, delta) {
+    if (!delta) return;
+    if (document.hidden || delta > 100) { this.cancel(); return; }
+    const dt = delta / 1000;
+    this.clock += dt;
+    this.cooldown = Math.max(0, this.cooldown - dt);
+    const fx = this.feedback();
+    const training = this.el.components['training-v4'];
+    if (!fx || !training || !this.active) {
+      this.root.visible = false;
+      this.stopHum();
+      return;
+    }
+    if (!fx.readAim(this.origin, this.aim)) { this.cancel(); return; }
+    const vr = this.el.is('vr-mode');
+    if (!vr) {
+      this.view.object3D.getWorldQuaternion(this.quaternion);
+      this.offset.set(0.22, -0.20, -0.18).applyQuaternion(this.quaternion);
+      this.origin.add(this.offset);
+      if (this.swingAge >= 0 && this.state === 'HELD') {
+        this.swingAge += dt;
+        if (this.swingAge > 0.28) this.swingAge = -1;
+        else this.aim.applyAxisAngle(this.up, 0.65 - (this.swingAge / 0.28) * 1.3).normalize();
+      }
+    }
+    const gripping = this.isGripping();
+    this.root.visible = this.state !== 'HELD' || !gripping;
+    this.bladeAmount = THREE.MathUtils.clamp(this.bladeAmount + (this.ignited ? 1 : -1) * dt * 7, 0, 1);
+    this.beam.scale.z = Math.max(0.001, this.bladeAmount);
+    this.beam.visible = this.bladeAmount > 0.01;
+    if (this.state === 'HELD') {
+      this.root.position.copy(this.origin);
+      this.root.quaternion.setFromUnitVectors(this.forward, this.aim);
+      if (this.ignited && this.bladeAmount > 0.9 && !gripping && this.cooldown <= 0)
+        this.stepMelee(dt, training);
+      else this.historyReady = false;
+    } else this.stepFlight(dt, training);
+    this.updateHum(this.active && this.ignited && this.root.visible);
+  }
+});
+</script>
+
 </head>
 
 <body>
 
-<div id="hud">Loading Impact Audio v5.2...</div>
+<div id="hud">Loading Cutter Lab v6.0...</div>
 <div id="crosshair">+</div>
 
 <a-scene
   training-v4
   ledge-climb
   ability-test
+  plasma-cutter
   background="color: #182333">
 
   <a-light
@@ -2086,7 +2580,7 @@ AFRAME.registerComponent('ability-test', {
   <a-plane class="tutorial-hint"
     position="-3 1.7 -3"
     width="2.8"
-    height="2.4"
+    height="3.0"
     color="#17202B">
   </a-plane>
 
@@ -2095,7 +2589,7 @@ AFRAME.registerComponent('ability-test', {
     align="center"
     width="2.5"
     color="white"
-    value="VR CONTROLS\nLeft stick: move\nRight stick: turn\nA: jump / ledge launch\nLeft stick click: sprint\nX: smooth / snap\nY: turning speed\nB: walking speed\nLeft trigger: reset orb\nRight trigger: knife\nRight stick click: hints">
+    value="VR CONTROLS\nLeft stick: move\nRight stick: turn\nA: jump / ledge launch\nLeft stick click: sprint\nX: smooth / snap\nY: turning speed\nB: walking speed\nLeft trigger: reset orb\nRight trigger: weapon\nR-stick UP: equip cutter / knife\nR-stick DOWN: blade on / off\nHold trigger: guide cutter\nNew trigger tap: recall\nRight stick click: hints">
   </a-text>
 
   <a-text
@@ -2103,7 +2597,7 @@ AFRAME.registerComponent('ability-test', {
     align="center"
     width="4"
     color="white"
-    value="DESCENT VR\nIMPACT AUDIO v5.2">
+    value="DESCENT VR\nCUTTER LAB v6.0">
   </a-text>
 
   <!-- Practice target -->
