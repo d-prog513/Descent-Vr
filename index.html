@@ -376,6 +376,15 @@ AFRAME.registerComponent('training-v4', {
   },
 
   rotatePlayer: function (angle) {
+    const climbing = this.el.components['ledge-climb'];
+    const grabbed = climbing
+      ? climbing.hands.filter(hand => hand.grabbing)
+      : [];
+    this.rig.object3D.updateWorldMatrix(true, true);
+    grabbed.forEach(hand => {
+      hand.el.object3D.getWorldPosition(hand.world);
+    });
+
     this.view.object3D.getWorldPosition(this.head);
 
     this.rig.object3D.rotation.y += angle;
@@ -390,6 +399,16 @@ AFRAME.registerComponent('training-v4', {
       this.head.z - this.after.z;
 
     this.rig.object3D.updateWorldMatrix(true, true);
+    // Rebase artificial turn only; physical pulling still moves the player.
+    // Controller visuals swivel with the rig, not fixed wall-hand IK.
+    grabbed.forEach(hand => {
+      hand.el.object3D.getWorldPosition(this.after);
+      hand.anchor.add(this.after.sub(hand.world));
+      hand.el.object3D.getWorldPosition(hand.world);
+    });
+    this.hands.forEach(hand => {
+      hand.ready = false;
+    });
   },
 
   tick: function (time, delta) {
@@ -409,15 +428,51 @@ AFRAME.registerComponent('training-v4', {
         return;
       }
     }
-    const climbing = this.el.components['ledge-climb'];
-
-    if (climbing && climbing.step(this)) {
-      return;
-    }
-    
     const dt = delta / 1000;
     const now = performance.now();
     const vr = this.inVR();
+
+    // Turn before ledge holding pauses locomotion.
+    if (vr) {
+      const turn = this.axes.turn;
+      const amount = Math.abs(turn);
+
+      if (amount < 0.25) {
+        this.snapReady = true;
+      }
+
+      if (
+        this.mode === 'smooth' &&
+        amount > 0.18
+      ) {
+        const speed = THREE.MathUtils.degToRad(
+          this.turnSpeeds[this.turnIndex]
+        );
+
+        this.rotatePlayer(
+          -Math.sign(turn) *
+          (amount - 0.18) / 0.82 *
+          speed * dt
+        );
+      } else if (
+        this.mode === 'snap' &&
+        amount > 0.65 &&
+        this.snapReady
+      ) {
+        this.rotatePlayer(
+          -Math.sign(turn) *
+          THREE.MathUtils.degToRad(30)
+        );
+
+        this.snapReady = false;
+      }
+    }
+
+
+    const climbing = this.el.components['ledge-climb'];
+    if (climbing && climbing.step(this)) {
+      return;
+    }
 
     let x = vr
       ? this.axes.x
@@ -481,40 +536,6 @@ AFRAME.registerComponent('training-v4', {
       );
     }
 
-    if (vr) {
-      const turn = this.axes.turn;
-      const amount = Math.abs(turn);
-
-      if (amount < 0.25) {
-        this.snapReady = true;
-      }
-
-      if (
-        this.mode === 'smooth' &&
-        amount > 0.18
-      ) {
-        const speed = THREE.MathUtils.degToRad(
-          this.turnSpeeds[this.turnIndex]
-        );
-
-        this.rotatePlayer(
-          -Math.sign(turn) *
-          (amount - 0.18) / 0.82 *
-          speed * dt
-        );
-      } else if (
-        this.mode === 'snap' &&
-        amount > 0.65 &&
-        this.snapReady
-      ) {
-        this.rotatePlayer(
-          -Math.sign(turn) *
-          THREE.MathUtils.degToRad(30)
-        );
-
-        this.snapReady = false;
-      }
-    }
 
     this.view.object3D.getWorldQuaternion(this.q);
 
