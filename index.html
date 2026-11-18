@@ -131,12 +131,10 @@ AFRAME.registerComponent('training-v4', {
       if (this.inVR()) this.jump();
     });
 
-    this.right.addEventListener('gripdown', () => {
-      if (this.inVR()) this.grip = true;
-    });
-
-    this.right.addEventListener('gripup', () => {
-      this.grip = false;
+    this.left.addEventListener('thumbstickdown', () => {
+      if (this.inVR()) {
+        this.grip = !this.grip;
+      }
     });
 
     this.hands.forEach(hand => {
@@ -450,7 +448,7 @@ AFRAME.registerComponent('training-v4', {
     if (sprint) {
       this.stamina = Math.max(
         0,
-        this.stamina - 28 * dt
+        this.stamina - 8 * dt
       );
 
       if (this.stamina === 0) {
@@ -459,7 +457,7 @@ AFRAME.registerComponent('training-v4', {
     } else if (this.grounded) {
       this.stamina = Math.min(
         100,
-        this.stamina + 18 * dt
+        this.stamina + 25 * dt
       );
     }
 
