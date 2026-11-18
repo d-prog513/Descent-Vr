@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Descent VR - Wrist Lab v6.2</title>
+<title>Descent VR - Wrist Lab v6.2.1</title>
 <script src="https://aframe.io/releases/1.8.0/aframe.min.js"></script>
 
 <style>
@@ -211,7 +211,11 @@ AFRAME.registerComponent('training-v4', {
       'Space',
       'ShiftLeft',
       'ShiftRight',
-      'KeyP'
+      'KeyP',
+      'ArrowLeft',
+      'ArrowRight',
+      'ArrowUp',
+      'ArrowDown'
     ];
 
     window.addEventListener('keydown', event => {
@@ -220,7 +224,8 @@ AFRAME.registerComponent('training-v4', {
 
       if (
         event.target.closest &&
-        event.target.closest('input,textarea,[contenteditable]')
+        (event.target.closest('input,textarea,[contenteditable]') ||
+          (event.code.startsWith('Arrow') && event.target.closest('button,select,a[href]')))
       ) {
         return;
       }
@@ -295,6 +300,20 @@ AFRAME.registerComponent('training-v4', {
 
   inVR: function () {
     return this.el.is('vr-mode');
+  },
+
+  stepKeyboardLook: function (dt) {
+    const pause = this.el.components['pause-menu'];
+    if (this.inVR() || document.hidden || (pause && pause.opened) ||
+        !Number.isFinite(dt) || dt <= 0 || dt > 0.1) return;
+    const look = this.view.components['look-controls'];
+    if (!look || !look.yawObject || !look.pitchObject) return;
+    const yaw = Number(this.keys.has('ArrowLeft')) - Number(this.keys.has('ArrowRight'));
+    const pitch = Number(this.keys.has('ArrowUp')) - Number(this.keys.has('ArrowDown'));
+    look.yawObject.rotation.y += yaw * (Math.PI / 2) * dt;
+    const limit = 85 * Math.PI / 180;
+    look.pitchObject.rotation.x = THREE.MathUtils.clamp(
+      look.pitchObject.rotation.x + pitch * (Math.PI / 3) * dt, -limit, limit);
   },
 
   clearInput: function () {
@@ -485,6 +504,7 @@ AFRAME.registerComponent('training-v4', {
     const dt = delta / 1000;
     const now = performance.now();
     const vr = this.inVR();
+    this.stepKeyboardLook(dt);
 
     if (vr) {
       const turn = this.axes.turn;
@@ -927,7 +947,7 @@ AFRAME.registerComponent('training-v4', {
           : 'READY';
 
     const status =
-      'WRIST LAB v6.2 | ' +
+      'WRIST LAB v6.2.1 | ' +
       (vr ? 'VR' : 'DESKTOP') + '\n' +
       'Stamina ' +
       Math.ceil(this.stamina) +
@@ -1456,7 +1476,7 @@ AFRAME.registerComponent('ability-test', {
     window.addEventListener('keydown', event => {
       if (event.repeat || this.el.is('vr-mode')) return;
       if (event.target.closest && event.target.closest('input,textarea,[contenteditable]')) return;
-      if (event.code === 'KeyF') { event.preventDefault(); this.requestPrimary(); }
+      if (event.code === 'KeyE') { event.preventDefault(); this.requestPrimary(); }
       if (event.code === 'KeyH') { event.preventDefault(); this.toggleHints(); }
     });
     ['enter-vr', 'exit-vr'].forEach(name => this.el.addEventListener(name, () => this.cancelKnife()));
@@ -2014,7 +2034,7 @@ AFRAME.registerComponent('ability-test', {
     const state = holding ? 'HOLD | Stamina ' + Math.ceil(training.stamina) + '/100 (grip costs 0)' : '';
     const knifeState = this.state === 'READY' && this.cooldown > 0 ? 'RECOVERING' : this.state;
     const cutter = this.el.components['plasma-cutter'];
-    let text = 'WRIST LAB v6.2 | ' + (cutter && cutter.active ?
+    let text = 'WRIST LAB v6.2.1 | ' + (cutter && cutter.active ?
       'CUTTER ' + cutter.state + (cutter.ignited ? ' ON' : ' OFF') +
       (cutter.guiding ? ' | TETHER -2/s' : '') +
       (cutter.state !== 'HELD' ? ' | ' + cutter.root.position.distanceTo(cutter.origin).toFixed(1) + 'm' : '') : 'KNIFE ' + knifeState);
@@ -2163,7 +2183,7 @@ AFRAME.registerComponent('plasma-cutter', {
       if (event.code === 'KeyG' && !event.repeat) this.recall('RETRIEVE - returning');
     });
     window.addEventListener('keyup', event => {
-      if (event.code === 'KeyF') this.endPress();
+      if (event.code === 'KeyE') this.endPress();
       this.controlKeys.delete(event.code);
     });
     ['enter-vr', 'exit-vr'].forEach(name => this.el.addEventListener(name, () => this.cancel()));
@@ -3023,7 +3043,7 @@ AFRAME.registerComponent('pause-menu', {
   toggle: function () { this.setOpen(!this.opened); },
 
   help: function () {
-    return 'QUEST\nLeft stick: move | Right stick: turn\nA: jump / ledge launch | Grips: climb\nR-stick UP: equip | DOWN: blade power\nTrigger hold: manipulate | Gentle release: hover\nThrow motion + release: launch along hand motion\nTwo quick trigger taps: retrieve\nR-stick click: pause / resume\nAim/grip hints: pause menu\nEmpty left wrist + look 0.8s: pause\n\nPHONE\nMove pad + drag Look; Sprint toggles\nTether lock frees your fingers; More: depth / roll / launch\n\nDESKTOP\nWASD move | Space jump | Shift sprint\nC equip | V blade | F tether | G retrieve\nI/K depth | J/L roll | Click swing\nP / Escape: pause\n\nTether costs 2 stamina/s; hover and retrieval are free.\nObject transfer and left-trigger ownership are not in this build yet.';
+    return 'QUEST\nLeft stick: move | Right stick: turn\nA: jump / ledge launch | Grips: climb\nR-stick UP: equip | DOWN: blade power\nTrigger hold: manipulate | Gentle release: hover\nThrow motion + release: launch along hand motion\nTwo quick trigger taps: retrieve\nR-stick click: pause / resume\nAim/grip hints: pause menu\nEmpty left wrist + look 0.8s: pause\n\nPHONE\nMove pad + drag Look; Sprint toggles\nTether lock frees your fingers; More: depth / roll / launch\n\nDESKTOP\nWASD move | Arrows look | Space jump | Shift sprint\nC equip | V blade | E tether | G retrieve\nI/K depth | J/L roll | Click swing\nP / Escape: pause\n\nTether costs 2 stamina/s; hover and retrieval are free.\nObject transfer and left-trigger ownership are not in this build yet.';
   },
 
   setOpen: function (value) {
@@ -3197,7 +3217,7 @@ AFRAME.registerComponent('pause-menu', {
 
 <body>
 
-<div id="hud">Loading Wrist Lab v6.2...</div>
+<div id="hud">Loading Wrist Lab v6.2.1...</div>
 <div id="crosshair">+</div>
 
 <a-scene
@@ -3314,7 +3334,7 @@ AFRAME.registerComponent('pause-menu', {
     align="center"
     width="4"
     color="white"
-    value="DESCENT VR\nWRIST LAB v6.2">
+    value="DESCENT VR\nWRIST LAB v6.2.1">
   </a-text>
 
   <!-- Practice target -->
