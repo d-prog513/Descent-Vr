@@ -4,69 +4,215 @@
   <meta charset="utf-8">
   <meta name="viewport"
         content="width=device-width, initial-scale=1">
-  <title>Descent VR — First Test</title>
+  <title>Descent VR — Punch Test</title>
   <script src="https://aframe.io/releases/1.8.0/aframe.min.js"></script>
+
+  <script>
+    AFRAME.registerComponent('punch-test', {
+      init: function () {
+        this.camera = document.querySelector('#view');
+        this.target = document.querySelector('#target');
+        this.label = document.querySelector('#label');
+        this.health = 100;
+        this.flashUntil = 0;
+        this.resetAt = 0;
+        this.placeAt = 0;
+
+        this.head = new THREE.Vector3();
+        this.forward = new THREE.Vector3();
+        this.center = new THREE.Vector3();
+        this.rotation = new THREE.Quaternion();
+
+        this.hands = ['#left', '#right'].map(selector => ({
+          el: document.querySelector(selector),
+          current: new THREE.Vector3(),
+          previous: new THREE.Vector3(),
+          ready: false,
+          inside: false,
+          nextHit: 0
+        }));
+
+        this.hands.forEach(hand => {
+          hand.el.addEventListener('triggerdown', () => {
+            if (this.el.is('vr-mode')) this.placeTarget();
+          });
+
+          hand.el.addEventListener('controllerconnected', () => {
+            hand.ready = false;
+          });
+
+          hand.el.addEventListener('controllerdisconnected', () => {
+            hand.ready = false;
+          });
+        });
+
+        this.el.addEventListener('enter-vr', () => {
+          this.hands.forEach(hand => { hand.ready = false; });
+          this.placeAt = performance.now() + 1000;
+        });
+      },
+
+      setLabel: function (message) {
+        this.label.setAttribute('value', message);
+      },
+
+      placeTarget: function () {
+        this.camera.object3D.getWorldPosition(this.head);
+        this.camera.object3D.getWorldQuaternion(this.rotation);
+
+        this.forward.set(0, 0, -1).applyQuaternion(this.rotation);
+        this.forward.y = 0;
+
+        if (this.forward.lengthSq() < 0.01) {
+          this.forward.set(0, 0, -1);
+        }
+        this.forward.normalize();
+
+        this.center.copy(this.head)
+          .addScaledVector(this.forward, 0.60);
+        this.center.y = this.head.y - 0.25;
+
+        this.target.object3D.position.copy(this.center);
+        this.label.object3D.position.copy(this.center);
+        this.label.object3D.position.y += 0.36;
+        this.label.object3D.lookAt(this.head);
+
+        this.health = 100;
+        this.resetAt = 0;
+        this.flashUntil = 0;
+        this.target.setAttribute('color', '#26C6DA');
+        this.setLabel('HP 100 / 100');
+
+        this.hands.forEach(hand => {
+          hand.ready = false;
+          hand.inside = true;
+          hand.nextHit = performance.now() + 600;
+        });
+      },
+
+      tick: function (time, delta) {
+        if (!this.el.is('vr-mode')) return;
+
+        const now = performance.now();
+
+        if (this.placeAt && now >= this.placeAt) {
+          this.placeAt = 0;
+          this.placeTarget();
+        }
+
+        if (this.resetAt && now >= this.resetAt) {
+          this.health = 100;
+          this.resetAt = 0;
+          this.target.setAttribute('color', '#26C6DA');
+          this.setLabel('HP 100 / 100');
+        }
+
+        if (this.flashUntil && now >= this.flashUntil) {
+          this.flashUntil = 0;
+          if (this.health > 0) {
+            this.target.setAttribute('color', '#26C6DA');
+          }
+        }
+
+        this.target.object3D.getWorldPosition(this.center);
+
+        this.hands.forEach(hand => {
+          hand.el.object3D.getWorldPosition(hand.current);
+
+          if (!hand.ready || !delta || delta > 100) {
+            hand.previous.copy(hand.current);
+            hand.ready = true;
+            return;
+          }
+
+          const speed =
+            hand.current.distanceTo(hand.previous) / (delta / 1000);
+          const distance = hand.current.distanceTo(this.center);
+
+          if (distance > 0.29) hand.inside = false;
+
+          if (distance < 0.23 && !hand.inside) {
+            hand.inside = true;
+
+            if (speed >= 0.45 &&
+                now >= hand.nextHit &&
+                !this.resetAt) {
+              hand.nextHit = now + 350;
+              this.health = Math.max(0, this.health - 20);
+
+              if (this.health === 0) {
+                this.target.setAttribute('color', '#FFD54F');
+                this.setLabel('Complete! Resetting...');
+                this.resetAt = now + 1500;
+              } else {
+                this.target.setAttribute('color', '#FF7043');
+                this.setLabel('HP ' + this.health + ' / 100');
+                this.flashUntil = now + 160;
+              }
+            }
+          }
+
+          hand.previous.copy(hand.current);
+        });
+      }
+    });
+  </script>
 </head>
 
 <body>
-  <a-scene background="color: #182333">
+  <a-scene punch-test background="color: #182333">
 
-    <!-- Lighting -->
     <a-light type="ambient" intensity="1"></a-light>
     <a-light type="directional"
              position="2 5 3"
              intensity="1"></a-light>
 
-    <!-- Floor -->
     <a-plane rotation="-90 0 0"
              width="16"
              height="16"
              color="#52616B"></a-plane>
 
-    <!-- A landmark in front of the starting position -->
-    <a-box position="0 0.5 -3"
-           width="1"
-           height="1"
-           depth="1"
-           color="#26C6DA"></a-box>
-
-    <!-- Two pillars and a beam -->
     <a-box position="-2 1.5 -6"
-           width="0.6"
-           height="3"
-           depth="0.6"
+           width="0.6" height="3" depth="0.6"
            color="#8795A1"></a-box>
 
     <a-box position="2 1.5 -6"
-           width="0.6"
-           height="3"
-           depth="0.6"
+           width="0.6" height="3" depth="0.6"
            color="#8795A1"></a-box>
 
     <a-box position="0 3.2 -6"
-           width="4.6"
-           height="0.4"
-           depth="0.6"
+           width="4.6" height="0.4" depth="0.6"
            color="#8795A1"></a-box>
 
-    <!-- Welcome sign -->
-    <a-text value="DESCENT VR\nFirst headset test"
+    <a-text value="DESCENT VR - PUNCH TEST v2\nTrigger: reset target in front of you"
             position="0 2.3 -4"
             align="center"
             color="#FFFFFF"
-            width="5"></a-text>
+            width="4"></a-text>
 
-    <!-- Player: no artificial locomotion yet -->
-    <a-entity id="rig" position="0 0 0">
-      <a-entity camera
+    <a-sphere id="target"
+              position="0 1.35 -0.6"
+              radius="0.18"
+              color="#26C6DA"></a-sphere>
+
+    <a-text id="label"
+            value="HP 100 / 100"
+            position="0 1.71 -0.6"
+            align="center"
+            color="#FFFFFF"
+            width="1.1"></a-text>
+
+    <a-entity id="rig">
+      <a-entity id="view"
+                camera
                 position="0 1.6 0"
                 look-controls></a-entity>
 
-      <a-entity laser-controls="hand: left"
-                raycaster="far: 5"></a-entity>
+      <a-entity id="left"
+                meta-touch-controls="hand: left"></a-entity>
 
-      <a-entity laser-controls="hand: right"
-                raycaster="far: 5"></a-entity>
+      <a-entity id="right"
+                meta-touch-controls="hand: right"></a-entity>
     </a-entity>
 
   </a-scene>
