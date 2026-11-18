@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Descent VR - Cutter Lab v6.0</title>
+<title>Descent VR - Tether Lab v6.1</title>
 <script src="https://aframe.io/releases/1.8.0/aframe.min.js"></script>
 
 <style>
@@ -50,6 +50,29 @@ body.immersive #crosshair {
 }
 #audio-panel button { margin-left: 5px; padding: 7px; cursor: pointer; }
 body.immersive #audio-panel { display: none; }
+
+
+#mobile-controls { display: none; }
+@media (any-pointer: coarse) {
+  body:not(.immersive) #mobile-controls { display: block; }
+  #mobile-controls { position: fixed; inset: 0; z-index: 15; pointer-events: none; user-select: none; -webkit-user-select: none; }
+  #mobile-controls button, #touch-move, #touch-look { pointer-events: auto; touch-action: none; }
+  #touch-move { position: absolute; bottom: max(24px, env(safe-area-inset-bottom)); left: 14px; width: min(29vw, 122px); height: min(29vw, 122px); border: 2px solid #72d9ff88; border-radius: 50%; background: #12253899; display: grid; place-items: center; color: #a8c9d6; font-size: 11px; }
+  #touch-move i { position: absolute; width: 36px; height: 36px; border-radius: 50%; background: #55ddff88; }
+  #touch-look { position: absolute; top: 104px; bottom: 185px; right: 10px; width: 53vw; border: 1px dashed #9adfff44; border-radius: 15px; }
+  #touch-look span { display: block; padding: 8px; text-align: center; color: #c9e9ff88; font: 10px Arial; }
+  #touch-actions { position: absolute; right: 8px; bottom: max(10px, env(safe-area-inset-bottom)); display: grid; grid-template-columns: repeat(4, min(13vw, 78px)); gap: 4px; pointer-events: none; }
+  #touch-actions button { min-height: 36px; border: 1px solid #5cb7dc99; border-radius: 7px; color: #eefaff; background: #19334be8; font: 10px Arial; padding: 3px; }
+  #touch-actions button:active { background: #397e9c; }
+  #audio-panel { left: 8px; right: 8px; top: 6px; bottom: auto; padding: 5px; font-size: 11px; }
+  #audio-panel button { padding: 5px; margin-left: 3px; font-size: 10px; touch-action: manipulation; }
+  #hud { top: 48px; left: 8px; right: 8px; padding: 5px; max-width: none; max-height: 46px; overflow: hidden; font-size: 10px; }
+  @media (max-height: 450px) {
+    #touch-look { top: 76px; bottom: 166px; }
+    #touch-actions button { min-height: 32px; }
+    #hud { max-height: 22px; }
+  }
+}
 
 </style>
 
@@ -486,15 +509,12 @@ AFRAME.registerComponent('training-v4', {
       return;
     }
 
-    let x = vr
-      ? this.axes.x
-      : Number(this.keys.has('KeyD')) -
-        Number(this.keys.has('KeyA'));
+    const touch = this.el.components['touch-controls'];
+    let x = vr ? this.axes.x : (touch && touch.moving ? touch.moveX :
+      Number(this.keys.has('KeyD')) - Number(this.keys.has('KeyA')));
 
-    let y = vr
-      ? this.axes.y
-      : Number(this.keys.has('KeyS')) -
-        Number(this.keys.has('KeyW'));
+    let y = vr ? this.axes.y : (touch && touch.moving ? touch.moveY :
+      Number(this.keys.has('KeyS')) - Number(this.keys.has('KeyW')));
 
     const magnitude = Math.hypot(x, y);
     const deadzone = vr ? 0.18 : 0;
@@ -514,8 +534,7 @@ AFRAME.registerComponent('training-v4', {
 
     const sprintHeld = vr
       ? this.grip
-      : this.keys.has('ShiftLeft') ||
-        this.keys.has('ShiftRight');
+      : this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') || (touch && touch.sprint);
 
     if (
       this.exhausted &&
@@ -890,7 +909,7 @@ AFRAME.registerComponent('training-v4', {
           : 'READY';
 
     const status =
-      'CUTTER LAB v6.0 | ' +
+      'TETHER LAB v6.1 | ' +
       (vr ? 'VR' : 'DESKTOP') + '\n' +
       'Stamina ' +
       Math.ceil(this.stamina) +
@@ -914,7 +933,7 @@ AFRAME.registerComponent('training-v4', {
         'WASD: move | Space: jump | Shift: sprint\n' +
         'Drag mouse: look | Click: short-range punch\n' +
         'R: reset orb | Aim with center +\n' +
-        'C: cutter/knife | V: blade on/off\nF: throw (hold: guide, new tap: recall) | H: hints\nClick: punch / cutter swing | Cutter Lab v6.0');
+        'C: cutter/knife | V: blade on/off\nF: throw / hold tether | G: retrieve | H: hints\nI/K: depth | J/L: roll | Phone: touch controls\nClick: punch / cutter swing | Tether Lab v6.1');
     }
   }
 });
@@ -1423,7 +1442,11 @@ AFRAME.registerComponent('ability-test', {
       if (this.el.is('vr-mode')) this.requestPrimary();
     });
     this.right.addEventListener('thumbstickdown', () => {
-      if (this.el.is('vr-mode')) this.toggleHints();
+      if (!this.el.is('vr-mode')) return;
+      const cutter = this.el.components['plasma-cutter'];
+      if (cutter && cutter.active && cutter.triggerHeld && cutter.state !== 'HELD') {
+        cutter.recall('RETRIEVE COMBO - returning');
+      } else this.toggleHints();
     });
     window.addEventListener('keydown', event => {
       if (event.repeat || this.el.is('vr-mode')) return;
@@ -1625,6 +1648,14 @@ AFRAME.registerComponent('ability-test', {
       } else if (kind === 'knife') {
         tone(640, 1040, 0.085, 0.14, 'triangle');
         tone(1280, 820, 0.12, 0.055, 'sine');
+      } else if (kind === 'launch') {
+        tone(240, 1050, 0.20, 0.19, 'triangle');
+        tone(110, 360, 0.17, 0.12, 'sine');
+      } else if (kind === 'retrieve') {
+        tone(950, 270, 0.22, 0.16, 'triangle');
+        tone(300, 150, 0.18, 0.09, 'sine');
+      } else if (kind === 'hover') {
+        tone(620, 440, 0.08, 0.075, 'sine');
       } else if (kind === 'ignite') {
         tone(120, 850, 0.22, 0.12, 'triangle');
         tone(60, 220, 0.18, 0.08, 'sine');
@@ -1988,14 +2019,15 @@ AFRAME.registerComponent('ability-test', {
     const state = holding ? 'HOLD | Stamina ' + Math.ceil(training.stamina) + '/100 (grip costs 0)' : '';
     const knifeState = this.state === 'READY' && this.cooldown > 0 ? 'RECOVERING' : this.state;
     const cutter = this.el.components['plasma-cutter'];
-    let text = 'CUTTER LAB v6.0 | ' + (cutter && cutter.active ?
+    let text = 'TETHER LAB v6.1 | ' + (cutter && cutter.active ?
       'CUTTER ' + cutter.state + (cutter.ignited ? ' ON' : ' OFF') +
-      (cutter.guiding ? ' | GUIDING -2/s' : '') : 'KNIFE ' + knifeState);
+      (cutter.guiding ? ' | TETHER -2/s' : '') +
+      (cutter.state !== 'HELD' ? ' | ' + cutter.root.position.distanceTo(cutter.origin).toFixed(1) + 'm' : '') : 'KNIFE ' + knifeState);
     text += ' | SFX ' + (this.muted ? 'MUTED' : Math.round(this.soundVolume * 100) + '%');
     if (state) text += '\n' + state;
     if (this.clock < this.feedbackUntil) text += '\n' + this.lastHit;
     else if (this.hints) text += this.el.is('vr-mode') ?
-      '\nR-stick UP: equip/stow | DOWN: blade | Click: hints' : '\nC: equip/stow | V: blade | F: throw/hold guide/tap recall | H: hints';
+      '\nTrigger: tether | Release: hover | Trigger + R-stick click: retrieve' : '\nC: equip | V: blade | F: tether | G: retrieve | I/K: depth | J/L: roll';
     if (text !== this.lastStatus) {
       this.status.setAttribute('value', text);
       this.lastStatus = text;
@@ -2011,6 +2043,36 @@ AFRAME.registerComponent('plasma-cutter', {
     this.right = document.querySelector('#right');
     this.view = document.querySelector('#view');
     this.rig = document.querySelector('#rig');
+    this.controlStart = new THREE.Vector3();
+    this.controlBlade = new THREE.Vector3();
+    this.controlForward = new THREE.Vector3();
+    this.controlDesired = new THREE.Vector3();
+    this.controlRelative = new THREE.Vector3();
+    this.proposedPosition = new THREE.Vector3();
+    this.safePosition = new THREE.Vector3();
+    this.remoteOldBase = new THREE.Vector3();
+    this.remoteOldTip = new THREE.Vector3();
+    this.remoteBase = new THREE.Vector3();
+    this.remoteTip = new THREE.Vector3();
+    this.poseDirection = new THREE.Vector3();
+    this.posePosition = new THREE.Vector3();
+    this.poseQuaternion = new THREE.Quaternion();
+    this.handWorldQuaternion = new THREE.Quaternion();
+    this.handLocalQuaternion = new THREE.Quaternion();
+    this.handStartQuaternion = new THREE.Quaternion();
+    this.bladeStartQuaternion = new THREE.Quaternion();
+    this.desiredQuaternion = new THREE.Quaternion();
+    this.parentQuaternion = new THREE.Quaternion();
+    this.safeQuaternion = new THREE.Quaternion();
+    this.rollQuaternion = new THREE.Quaternion();
+    this.remoteHistory = false;
+    this.wallLatched = false;
+    this.returnAge = 0;
+    this.safetyReturn = false;
+    this.remoteDepth = 2;
+    this.depthStart = 2;
+    this.remoteRoll = 0;
+    this.controlKeys = new Set();
     this.active = false;
     this.ignited = false;
     this.state = 'HELD';
@@ -2050,6 +2112,10 @@ AFRAME.registerComponent('plasma-cutter', {
     emitter.rotation.x = Math.PI / 2;
     emitter.position.z = -0.13;
     this.root.add(emitter);
+    const marker = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.014, 0.065),
+      new THREE.MeshBasicMaterial({color: 0xffba55}));
+    marker.position.set(0.043, 0.01, -0.07);
+    this.root.add(marker);
     const grip = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.055, 0.12),
       new THREE.MeshStandardMaterial({color: 0x172936, roughness: 0.9}));
     grip.position.z = 0.035;
@@ -2088,7 +2154,17 @@ AFRAME.registerComponent('plasma-cutter', {
       if (event.code === 'KeyC') { event.preventDefault(); this.toggleEquip(); }
       if (event.code === 'KeyV') { event.preventDefault(); this.toggleBlade(); }
     });
-    window.addEventListener('keyup', event => { if (event.code === 'KeyF') this.endPress(); });
+    window.addEventListener('keydown', event => {
+      if (this.el.is('vr-mode') || (event.target.closest && event.target.closest('input,textarea,[contenteditable],button'))) return;
+      if (['KeyI', 'KeyK', 'KeyJ', 'KeyL'].includes(event.code)) {
+        event.preventDefault(); this.controlKeys.add(event.code);
+      }
+      if (event.code === 'KeyG' && !event.repeat) this.recall('RETRIEVE - returning');
+    });
+    window.addEventListener('keyup', event => {
+      if (event.code === 'KeyF') this.endPress();
+      this.controlKeys.delete(event.code);
+    });
     ['enter-vr', 'exit-vr'].forEach(name => this.el.addEventListener(name, () => this.cancel()));
     window.addEventListener('blur', () => this.cancel());
     document.addEventListener('visibilitychange', () => { if (document.hidden) this.cancel(); });
@@ -2113,7 +2189,7 @@ AFRAME.registerComponent('plasma-cutter', {
     const fx = this.feedback();
     if (!fx || document.hidden) return;
     fx.unlockAudio();
-    if (this.state !== 'HELD') { this.recall('Recall first, then flick UP to stow'); return; }
+    if (this.state !== 'HELD') { this.message('Retrieve first: hold trigger + click R-stick (desktop G)'); return; }
     if (fx.state !== 'READY' || fx.cooldown > 0 || this.cooldown > 0) {
       this.message('Wait for the weapon to finish returning'); return;
     }
@@ -2149,10 +2225,19 @@ AFRAME.registerComponent('plasma-cutter', {
 
   endPress: function () {
     if (!this.triggerHeld) return;
-    const tapRecall = this.active && this.state === 'OUTBOUND' &&
-      !this.pressLaunched && this.clock - this.pressAt < 0.22;
+    const launchTap = this.state === 'OUTBOUND' && this.pressLaunched && this.clock - this.pressAt < 0.18;
     this.clearTrigger();
-    if (tapRecall) this.recall('CUTTER RECALLED');
+    if (!launchTap && this.active && this.state !== 'HELD' && this.state !== 'RETURNING') this.hover(true);
+  },
+
+  hover: function (audible) {
+    if (this.state === 'HELD') return;
+    this.state = 'HOVER';
+    this.guiding = false;
+    this.gestureReady = false;
+    this.velocity.set(0, 0, 0);
+    if (audible) this.feedback().playEffect('hover');
+    this.message('BLADE PARKED - trigger to manipulate; trigger + stick click retrieves');
   },
 
   clearTrigger: function () {
@@ -2163,7 +2248,15 @@ AFRAME.registerComponent('plasma-cutter', {
   },
 
   primaryAction: function (origin, direction) {
-    if (!this.active || this.state !== 'HELD') return;
+    if (!this.active) return;
+    if (this.state !== 'HELD') {
+      if (this.safetyReturn) { this.clearTrigger(); return; }
+      this.state = 'CONTROLLED';
+      this.gestureReady = false;
+      this.remoteHistory = false;
+      this.message('TETHER GRABBED - move hand + rotate wrist; release parks blade');
+      return;
+    }
     if (this.isGripping()) { this.clearTrigger(); this.message('Release right grip before throwing'); return; }
     if (!this.ignited || this.bladeAmount < 0.9) {
       this.clearTrigger(); this.message('Ignite cutter first: R-stick DOWN / desktop V'); return;
@@ -2177,18 +2270,31 @@ AFRAME.registerComponent('plasma-cutter', {
     }
     this.swingAge = -1;
     this.direction.copy(direction).normalize();
-    this.root.quaternion.setFromUnitVectors(this.forward, this.direction);
+    if (this.el.is('vr-mode')) this.root.quaternion.setFromRotationMatrix(this.feedback().aimMatrix).normalize();
+    else this.root.quaternion.copy(this.quaternion);
     this.state = 'OUTBOUND';
     this.flightAge = 0;
     this.historyReady = false;
     this.pressLaunched = true;
-    this.message('CUTTER THROWN - hold trigger to guide; new quick tap recalls');
+    this.remoteOldBase.copy(this.root.position).addScaledVector(this.direction, 0.15);
+    this.remoteOldTip.copy(this.root.position).addScaledVector(this.direction, 1.05);
+    this.remoteHistory = true;
+    this.safetyReturn = false;
+    this.wallLatched = false;
+    this.armed.dummy = this.armed.orb = true;
+    this.feedback().playEffect('launch');
+    this.message('CUTTER RELEASED - hold trigger to manipulate; release to hover');
   },
 
-  recall: function (text) {
-    if (this.state !== 'OUTBOUND') return;
+  recall: function (text, safety) {
+    if (!this.active || this.state === 'HELD') return;
+    const starting = this.state !== 'RETURNING';
     this.state = 'RETURNING';
+    this.safetyReturn = safety === true || (this.safetyReturn && !starting);
+    this.returnAge = 0;
+    this.remoteHistory = false;
     this.clearTrigger();
+    if (starting) this.feedback().playEffect('retrieve');
     if (text) this.message(text);
   },
 
@@ -2200,6 +2306,11 @@ AFRAME.registerComponent('plasma-cutter', {
     this.flightAge = 0;
     this.cooldown = 0.3;
     this.swingAge = -1;
+    this.returnAge = 0;
+    this.safetyReturn = false;
+    this.remoteHistory = false;
+    this.wallLatched = false;
+    this.controlKeys.clear();
     this.clearTrigger();
     this.root.visible = false;
     this.beam.visible = false;
@@ -2227,12 +2338,21 @@ AFRAME.registerComponent('plasma-cutter', {
         oscillator.type = 'triangle';
         oscillator.frequency.value = 105;
         gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-        gain.gain.linearRampToValueAtTime(0.023, ctx.currentTime + 0.08);
+        gain.gain.linearRampToValueAtTime(0.07, ctx.currentTime + 0.08);
         oscillator.connect(gain);
         gain.connect(fx.masterGain);
         oscillator.start();
         this.hum = {oscillator: oscillator, gain: gain};
       } catch (error) { this.hum = null; }
+    }
+    if (this.hum) {
+      const speed = Math.min(15, this.velocity.length());
+      const remote = this.state !== 'HELD';
+      this.hum.oscillator.frequency.setTargetAtTime(
+        (this.state === 'RETURNING' ? 165 : remote ? 125 : 105) + speed * 9,
+        ctx.currentTime, 0.045);
+      this.hum.gain.gain.setTargetAtTime(remote ? 0.075 + speed * 0.006 : 0.045,
+        ctx.currentTime, 0.04);
     }
   },
 
@@ -2242,57 +2362,113 @@ AFRAME.registerComponent('plasma-cutter', {
     this.nextSwing = this.clock + 0.45;
   },
 
+  captureControl: function () {
+    const parent = this.right.object3D.parent;
+    this.controlStart.copy(this.origin);
+    parent.worldToLocal(this.controlStart);
+    this.controlBlade.copy(this.root.position);
+    parent.worldToLocal(this.controlBlade);
+    parent.getWorldQuaternion(this.parentQuaternion);
+    this.inverseQuaternion.copy(this.parentQuaternion).invert();
+    this.handLocalQuaternion.copy(this.inverseQuaternion).multiply(this.handWorldQuaternion);
+    this.handStartQuaternion.copy(this.handLocalQuaternion).invert();
+    this.bladeStartQuaternion.copy(this.inverseQuaternion).multiply(this.root.quaternion);
+    this.controlForward.copy(this.aim).applyQuaternion(this.inverseQuaternion).normalize();
+    this.remoteDepth = THREE.MathUtils.clamp(this.root.position.distanceTo(this.origin), 0.5, 12);
+    this.depthStart = this.remoteDepth;
+    this.remoteRoll = 0;
+    this.controlRelative.copy(this.root.position).sub(this.origin);
+    this.inverseQuaternion.copy(this.handWorldQuaternion).invert();
+    this.controlRelative.applyQuaternion(this.inverseQuaternion);
+    this.gestureReady = true;
+  },
+
   updateGuidance: function (dt, training) {
-    this.guiding = this.triggerHeld && this.clock - this.pressAt >= 0.22 && !this.isGripping();
-    if (!this.guiding) { this.gestureReady = false; return; }
-    if (training.stamina <= 0) { this.recall('STAMINA EMPTY - free recall'); return; }
+    this.guiding = this.triggerHeld && !this.isGripping();
+    if (!this.guiding) { this.hover(false); return; }
+    if (training.stamina <= 0) { this.recall('STAMINA EMPTY - free safety retrieve', true); return; }
     training.stamina = Math.max(0, training.stamina - 2 * dt);
-    if (training.stamina <= 0) { this.recall('STAMINA EMPTY - free recall'); return; }
-    this.desired.copy(this.aim);
+    if (training.stamina <= 0) { this.recall('STAMINA EMPTY - free safety retrieve', true); return; }
+    if (!this.gestureReady) this.captureControl();
+    const parent = this.right.object3D.parent;
+    parent.getWorldQuaternion(this.parentQuaternion);
+    this.inverseQuaternion.copy(this.parentQuaternion).invert();
+    this.handLocalQuaternion.copy(this.inverseQuaternion).multiply(this.handWorldQuaternion);
     if (this.el.is('vr-mode')) {
-      this.handLocal.copy(this.right.object3D.position);
-      if (!this.gestureReady) {
-        this.gestureStart.copy(this.handLocal);
-        this.gesturePrevious.copy(this.handLocal);
-        this.pullDirection.copy(this.view.object3D.position).sub(this.handLocal);
-        this.pullDirection.y = 0;
-        if (this.pullDirection.lengthSq() < 0.01) {
-          this.right.object3D.parent.getWorldQuaternion(this.inverseQuaternion);
-          this.inverseQuaternion.invert();
-          this.pullDirection.copy(this.aim).negate().applyQuaternion(this.inverseQuaternion);
-          this.pullDirection.y = 0;
-        }
-        if (this.pullDirection.lengthSq() < 0.001) this.pullDirection.set(0, 0, 1);
-        this.pullDirection.normalize();
-        this.gestureAt = this.clock;
-        this.gestureReady = true;
-      }
-      this.gestureDelta.copy(this.handLocal).sub(this.gesturePrevious);
-      const pullSpeed = this.gestureDelta.dot(this.pullDirection) / dt;
-      this.gestureDelta.copy(this.handLocal).sub(this.gestureStart);
-      const pullDistance = this.gestureDelta.dot(this.pullDirection);
-      if (pullDistance > 0.18 && pullSpeed > 0.35 && this.clock - this.gestureAt < 1.3) {
-        this.recall('PULL GESTURE - returning'); return;
-      }
-      // Physical hand offsets are local to the rig: walking/turning are not gestures.
-      this.offset.copy(this.gestureDelta);
-      this.offset.addScaledVector(this.pullDirection, -this.offset.dot(this.pullDirection));
-      this.offset.clampLength(0, 0.30);
-      this.right.object3D.parent.getWorldQuaternion(this.quaternion);
-      this.offset.applyQuaternion(this.quaternion);
-      this.desired.addScaledVector(this.offset, 1.8).normalize();
-      this.gesturePrevious.copy(this.handLocal);
-      if (this.clock - this.gestureAt > 1.3) {
-        this.gestureStart.copy(this.handLocal);
-        this.gestureAt = this.clock;
+      this.handLocal.copy(this.origin);
+      parent.worldToLocal(this.handLocal);
+      this.gestureDelta.copy(this.handLocal).sub(this.controlStart);
+      const depth = this.gestureDelta.dot(this.controlForward);
+      this.controlDesired.copy(this.controlBlade).addScaledVector(this.gestureDelta, 3.5)
+        .addScaledVector(this.controlForward, depth * 2.5);
+      parent.localToWorld(this.controlDesired);
+    } else {
+      const touch = this.el.components['touch-controls'];
+      const depthAxis = Number(this.controlKeys.has('KeyI')) - Number(this.controlKeys.has('KeyK')) +
+        (touch ? touch.depthAxis : 0);
+      const rollAxis = Number(this.controlKeys.has('KeyL')) - Number(this.controlKeys.has('KeyJ')) +
+        (touch ? touch.rollAxis : 0);
+      this.remoteDepth = THREE.MathUtils.clamp(this.remoteDepth + depthAxis * 3 * dt, 0.5, 12);
+      this.remoteRoll += rollAxis * 1.8 * dt;
+      this.controlDesired.copy(this.controlRelative);
+      this.controlDesired.z -= this.remoteDepth - this.depthStart;
+      this.controlDesired.applyQuaternion(this.handWorldQuaternion).add(this.origin);
+    }
+    // Independent orientation: changing blade pitch/yaw/roll never points it along velocity.
+    this.desiredQuaternion.copy(this.handLocalQuaternion).multiply(this.handStartQuaternion)
+      .multiply(this.bladeStartQuaternion).premultiply(this.parentQuaternion);
+    this.rollQuaternion.setFromAxisAngle(this.forward, this.remoteRoll);
+    this.desiredQuaternion.multiply(this.rollQuaternion);
+    this.offset.copy(this.controlDesired).sub(this.origin).clampLength(0, 12);
+    this.controlDesired.copy(this.origin).add(this.offset);
+    this.controlDesired.y = Math.max(0.08, this.controlDesired.y);
+    this.proposedPosition.copy(this.root.position).lerp(this.controlDesired, 1 - Math.exp(-16 * dt));
+    this.offset.copy(this.proposedPosition).sub(this.root.position).clampLength(0, 12 * dt);
+    this.proposedPosition.copy(this.root.position).add(this.offset);
+    this.poseQuaternion.copy(this.root.quaternion).rotateTowards(this.desiredQuaternion, 9 * dt);
+    this.solveRemotePose(this.proposedPosition, this.poseQuaternion, training);
+  },
+
+  poseBlocked: function (position, orientation, training) {
+    if (position.y < 0.045) return true;
+    this.poseDirection.copy(this.forward).applyQuaternion(orientation);
+    this.point.copy(position).addScaledVector(this.poseDirection, 1.07);
+    if (this.point.y < 0.045) return true;
+    return Number.isFinite(this.feedback().blockingDistance(position, this.poseDirection, 1.07, training));
+  },
+
+  solveRemotePose: function (position, orientation, training) {
+    this.safePosition.copy(this.root.position);
+    this.safeQuaternion.copy(this.root.quaternion);
+    const travel = this.safePosition.distanceTo(position);
+    const angle = this.safeQuaternion.angleTo(orientation);
+    const steps = Math.min(40, Math.max(1, Math.ceil((travel + angle * 1.07) / 0.035)));
+    let blocked = false;
+    for (let index = 1; index <= steps; index++) {
+      const fraction = index / steps;
+      this.posePosition.copy(this.safePosition).lerp(position, fraction);
+      this.quaternion.copy(this.safeQuaternion).slerp(orientation, fraction);
+      if (this.poseBlocked(this.posePosition, this.quaternion, training)) { blocked = true; break; }
+      this.root.position.copy(this.posePosition);
+      this.root.quaternion.copy(this.quaternion);
+    }
+    // If a requested rotation is blocked, allow translation away from the wall.
+    if (blocked && travel > 0.001 && angle > 0.001) {
+      for (let index = 1; index <= steps; index++) {
+        this.posePosition.copy(this.safePosition).lerp(position, index / steps);
+        if (this.poseBlocked(this.posePosition, this.safeQuaternion, training)) break;
+        this.root.position.copy(this.posePosition);
+        this.root.quaternion.copy(this.safeQuaternion);
       }
     }
-    const angle = this.direction.angleTo(this.desired);
-    const step = Math.min(1, (2.8 * dt) / Math.max(angle, 0.00001));
-    this.quaternion.setFromUnitVectors(this.direction, this.desired);
-    // Quaternion interpolation avoids a zero vector during a 180-degree turn.
-    this.inverseQuaternion.identity().slerp(this.quaternion, step);
-    this.direction.applyQuaternion(this.inverseQuaternion).normalize();
+    if (blocked && !this.wallLatched) {
+      this.poseDirection.copy(this.forward).applyQuaternion(this.root.quaternion);
+      this.point.copy(this.root.position).addScaledVector(this.poseDirection, 0.9);
+      this.feedback().hitFeedback('wall', this.point);
+      this.message('SURFACE CONTACT - move or rotate away; retrieve combo still works');
+    }
+    this.wallLatched = blocked;
+    return !blocked;
   },
 
   testBladeSegment: function (base, tip, training, hits) {
@@ -2370,56 +2546,88 @@ AFRAME.registerComponent('plasma-cutter', {
     this.oldTip.copy(this.localTip);
   },
 
+  stepRemoteDamage: function (dt, training) {
+    if (!this.ignited || this.bladeAmount < 0.9) { this.remoteHistory = false; return; }
+    this.poseDirection.copy(this.forward).applyQuaternion(this.root.quaternion);
+    this.remoteBase.copy(this.root.position).addScaledVector(this.poseDirection, 0.15);
+    this.remoteTip.copy(this.root.position).addScaledVector(this.poseDirection, 1.05);
+    if (!this.remoteHistory) {
+      this.remoteOldBase.copy(this.remoteBase);
+      this.remoteOldTip.copy(this.remoteTip);
+      this.remoteHistory = true;
+      return;
+    }
+    const travel = Math.max(this.remoteTip.distanceTo(this.remoteOldTip), this.remoteBase.distanceTo(this.remoteOldBase));
+    const hits = {dummy: false, orb: false};
+    const steps = Math.min(32, Math.max(1, Math.ceil(travel / 0.035)));
+    for (let index = 0; index <= steps; index++) {
+      this.sweepStart.copy(this.remoteOldBase).lerp(this.remoteBase, index / steps);
+      this.sweepTip.copy(this.remoteOldTip).lerp(this.remoteTip, index / steps);
+      this.testBladeSegment(this.sweepStart, this.sweepTip, training, hits);
+    }
+    ['dummy', 'orb'].forEach(kind => {
+      if (!hits[kind]) this.armed[kind] = true;
+      if (hits[kind] && this.armed[kind] && travel / dt >= 0.45 && this.clock >= this.nextHit[kind]) {
+        this.damageTarget(kind, 25, training);
+        this.armed[kind] = false;
+        this.nextHit[kind] = this.clock + 0.4;
+      }
+    });
+    this.remoteOldBase.copy(this.remoteBase);
+    this.remoteOldTip.copy(this.remoteTip);
+  },
+
   stepFlight: function (dt, training) {
     const fx = this.feedback();
     this.flightAge += dt;
-    // Recall is non-damaging and ignores scenery, just like the existing knife return.
-    if (this.flightAge > 15) { this.cancel(); this.message('CUTTER RECOVERED SAFELY'); return; }
-    if (this.state === 'OUTBOUND') {
-      this.updateGuidance(dt, training);
-      if (this.state !== 'OUTBOUND') return;
-      const length = 9 * dt;
-      this.start.copy(this.root.position);
-      this.end.copy(this.start).addScaledVector(this.direction, length + 1.05);
-      const hits = {dummy: false, orb: false};
-      this.testBladeSegment(this.start, this.end, training, hits);
-      let kind = hits.dummy ? 'dummy' : hits.orb ? 'orb' : null;
-      if (kind) {
-        this.root.position.copy(this.start).addScaledVector(this.direction,
-          Math.max(0, this.start.distanceTo(this.contact[kind]) - 1.05));
-        this.damageTarget(kind, 25, training);
-        this.recall();
-      } else {
-        const wall = fx.blockingDistance(this.start, this.direction, length + 1.05, training);
-        if (Number.isFinite(wall)) {
-          this.point.copy(this.start).addScaledVector(this.direction, wall);
-          this.root.position.copy(this.start).addScaledVector(this.direction, Math.max(0, wall - 1.075));
-          fx.hitFeedback('wall', this.point);
-          this.recall('CUTTER BLOCKED - returning');
-        } else {
-          this.root.position.addScaledVector(this.direction, length);
-          if (this.root.position.distanceTo(this.origin) >= 12 || this.flightAge > 12)
-            this.recall('CUTTER RANGE LIMIT - returning');
-        }
-      }
-      this.root.quaternion.setFromUnitVectors(this.forward, this.direction);
-    } else {
+    this.start.copy(this.root.position);
+    if (this.state === 'RETURNING') {
+      this.returnAge += dt;
       this.home.copy(this.origin);
-      this.velocity.copy(this.home).sub(this.root.position);
-      const distance = this.velocity.length();
-      if (distance <= Math.max(0.16, 15 * dt)) {
+      this.offset.copy(this.home).sub(this.root.position);
+      const distance = this.offset.length();
+      if (distance <= Math.max(0.16, 15 * dt) || this.returnAge > 6) {
         this.root.position.copy(this.home);
         this.state = 'HELD';
+        this.safetyReturn = false;
         this.cooldown = 0.4;
         this.clearTrigger();
         this.historyReady = false;
+        this.remoteHistory = false;
+        this.velocity.set(0, 0, 0);
         fx.hitFeedback('catch', this.home);
         this.message('CUTTER CAUGHT');
       } else {
-        this.velocity.multiplyScalar(1 / distance);
-        this.root.position.addScaledVector(this.velocity, 15 * dt);
-        this.root.quaternion.setFromUnitVectors(this.forward, this.velocity);
+        this.offset.multiplyScalar(1 / distance);
+        this.root.position.addScaledVector(this.offset, 15 * dt);
+        this.root.quaternion.rotateTowards(this.handWorldQuaternion, 8 * dt);
+        this.velocity.copy(this.offset).multiplyScalar(15);
       }
+      return;
+    }
+    if ((this.state === 'OUTBOUND' || this.state === 'HOVER') && this.triggerHeld &&
+        this.clock - this.pressAt >= 0.18 && !this.isGripping()) {
+      this.state = 'CONTROLLED';
+      this.gestureReady = false;
+    }
+    if (this.state === 'CONTROLLED') this.updateGuidance(dt, training);
+    else if (this.state === 'OUTBOUND') {
+      this.proposedPosition.copy(this.root.position).addScaledVector(this.direction, 8 * dt);
+      const clear = this.solveRemotePose(this.proposedPosition, this.root.quaternion, training);
+      if (!clear || this.flightAge >= 0.5) this.hover(false);
+    }
+    // A parked blade stays in world space until it reaches the 12m leash boundary.
+    if (this.state === 'HOVER') {
+      this.offset.copy(this.root.position).sub(this.origin);
+      if (this.offset.length() > 12) {
+        this.offset.clampLength(0, 12);
+        this.proposedPosition.copy(this.origin).add(this.offset);
+        this.solveRemotePose(this.proposedPosition, this.root.quaternion, training);
+      }
+    }
+    if (this.state !== 'RETURNING' && this.state !== 'HELD') {
+      this.velocity.copy(this.root.position).sub(this.start).multiplyScalar(1 / dt);
+      this.stepRemoteDamage(dt, training);
     }
   },
 
@@ -2438,6 +2646,8 @@ AFRAME.registerComponent('plasma-cutter', {
     }
     if (!fx.readAim(this.origin, this.aim)) { this.cancel(); return; }
     const vr = this.el.is('vr-mode');
+    if (vr) this.handWorldQuaternion.setFromRotationMatrix(fx.aimMatrix).normalize();
+    else this.view.object3D.getWorldQuaternion(this.handWorldQuaternion);
     if (!vr) {
       this.view.object3D.getWorldQuaternion(this.quaternion);
       this.offset.set(0.22, -0.20, -0.18).applyQuaternion(this.quaternion);
@@ -2445,7 +2655,12 @@ AFRAME.registerComponent('plasma-cutter', {
       if (this.swingAge >= 0 && this.state === 'HELD') {
         this.swingAge += dt;
         if (this.swingAge > 0.28) this.swingAge = -1;
-        else this.aim.applyAxisAngle(this.up, 0.65 - (this.swingAge / 0.28) * 1.3).normalize();
+        else {
+          const swing = 0.65 - (this.swingAge / 0.28) * 1.3;
+          this.aim.applyAxisAngle(this.up, swing).normalize();
+          this.quaternion.setFromAxisAngle(this.up, swing);
+          this.handWorldQuaternion.premultiply(this.quaternion);
+        }
       }
     }
     const gripping = this.isGripping();
@@ -2455,7 +2670,8 @@ AFRAME.registerComponent('plasma-cutter', {
     this.beam.visible = this.bladeAmount > 0.01;
     if (this.state === 'HELD') {
       this.root.position.copy(this.origin);
-      this.root.quaternion.setFromUnitVectors(this.forward, this.aim);
+      this.root.quaternion.copy(this.handWorldQuaternion);
+      this.velocity.set(0, 0, 0);
       if (this.ignited && this.bladeAmount > 0.9 && !gripping && this.cooldown <= 0)
         this.stepMelee(dt, training);
       else this.historyReady = false;
@@ -2465,11 +2681,147 @@ AFRAME.registerComponent('plasma-cutter', {
 });
 </script>
 
+
+<script>
+AFRAME.registerComponent('touch-controls', {
+  init: function () {
+    this.moveX = this.moveY = 0;
+    this.depthAxis = this.rollAxis = 0;
+    this.moving = this.sprint = this.locked = false;
+    this.releases = new Map();
+    this.view = document.querySelector('#view');
+    const container = document.createElement('div');
+    container.id = 'mobile-controls';
+    container.innerHTML = '<div id="touch-look"><span>DRAG TO LOOK</span></div>' +
+      '<div id="touch-move" aria-label="Movement joystick"><span>MOVE</span><i></i></div>' +
+      '<div id="touch-actions"></div>';
+    document.body.appendChild(container);
+    this.container = container;
+    this.knob = container.querySelector('#touch-move i');
+    const train = () => this.el.components['training-v4'];
+    const fx = () => this.el.components['ability-test'];
+    const cutter = () => this.el.components['plasma-cutter'];
+    const prevent = event => { event.preventDefault(); event.stopPropagation(); };
+    const hold = (element, start) => {
+      element.addEventListener('pointerdown', event => {
+        if (this.el.is('vr-mode')) return;
+        prevent(event);
+        try { element.setPointerCapture(event.pointerId); } catch (error) {}
+        if (fx()) fx().unlockAudio();
+        const end = start(event) || (() => {});
+        this.releases.set(event.pointerId, end);
+      });
+      ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(name => element.addEventListener(name, event => {
+        prevent(event);
+        const end = this.releases.get(event.pointerId);
+        this.releases.delete(event.pointerId);
+        if (end) end();
+      }));
+    };
+    const move = container.querySelector('#touch-move');
+    let movePointer = null;
+    const updateMove = event => {
+      const box = move.getBoundingClientRect();
+      const radius = box.width * 0.36;
+      let x = event.clientX - (box.left + box.width / 2);
+      let y = event.clientY - (box.top + box.height / 2);
+      const length = Math.hypot(x, y);
+      if (length > radius) { x *= radius / length; y *= radius / length; }
+      this.moveX = x / radius; this.moveY = y / radius;
+      this.knob.style.transform = 'translate(' + x + 'px,' + y + 'px)';
+    };
+    hold(move, event => {
+      if (movePointer !== null) return;
+      movePointer = event.pointerId; this.moving = true; updateMove(event);
+      return () => { movePointer = null; this.moving = false; this.moveX = this.moveY = 0; this.knob.style.transform = ''; };
+    });
+    move.addEventListener('pointermove', event => { if (event.pointerId === movePointer) { prevent(event); updateMove(event); } });
+    const look = container.querySelector('#touch-look');
+    let lookPointer = null, lastX = 0, lastY = 0;
+    hold(look, event => {
+      if (lookPointer !== null) return;
+      lookPointer = event.pointerId; lastX = event.clientX; lastY = event.clientY;
+      return () => { lookPointer = null; };
+    });
+    look.addEventListener('pointermove', event => {
+      if (event.pointerId !== lookPointer) return;
+      prevent(event);
+      const controls = this.view.components['look-controls'];
+      if (controls && controls.yawObject && controls.pitchObject) {
+        controls.yawObject.rotation.y -= (event.clientX - lastX) * 0.004;
+        controls.pitchObject.rotation.x = THREE.MathUtils.clamp(
+          controls.pitchObject.rotation.x - (event.clientY - lastY) * 0.004,
+          -Math.PI * 0.49, Math.PI * 0.49);
+      }
+      lastX = event.clientX; lastY = event.clientY;
+    });
+    const add = (label, id, action) => {
+      const button = document.createElement('button');
+      button.type = 'button'; button.textContent = label; button.dataset.action = id;
+      hold(button, action);
+      container.querySelector('#touch-actions').appendChild(button);
+      return button;
+    };
+    add('Fire / Guide', 'fire', () => {
+      this.locked = false;
+      if (fx()) fx().requestPrimary();
+      return () => { if (cutter()) cutter().endPress(); };
+    });
+    add('Retrieve', 'retrieve', () => { this.locked = false; if (cutter()) cutter().recall('TOUCH RETRIEVE'); });
+    add('Equip', 'equip', () => { this.locked = false; if (cutter()) cutter().toggleEquip(); });
+    add('Blade', 'blade', () => { if (cutter()) cutter().toggleBlade(); });
+    add('Swing / Punch', 'swing', () => { if (train()) train().desktopPunch(); });
+    add('Jump', 'jump', () => { if (train()) train().jump(); });
+    add('Sprint', 'sprint', () => { this.sprint = true; return () => { this.sprint = false; }; });
+    add('Reset orb', 'orb', () => { if (train()) train().placeTarget(); });
+    add('Depth +', 'depth-plus', () => { this.depthAxis = 1; return () => { this.depthAxis = 0; }; });
+    add('Depth -', 'depth-minus', () => { this.depthAxis = -1; return () => { this.depthAxis = 0; }; });
+    add('Roll -', 'roll-minus', () => { this.rollAxis = -1; return () => { this.rollAxis = 0; }; });
+    add('Roll +', 'roll-plus', () => { this.rollAxis = 1; return () => { this.rollAxis = 0; }; });
+    this.lockButton = add('Tether lock', 'tether', () => {
+      const c = cutter();
+      if (!c || !c.active) return;
+      if (this.locked) { c.endPress(); this.locked = false; }
+      else { this.locked = true; fx().requestPrimary(); }
+    });
+    add('Hints', 'hints', () => { if (fx()) fx().toggleHints(); });
+    container.addEventListener('contextmenu', prevent);
+    container.addEventListener('keydown', event => event.stopPropagation());
+    const clear = () => this.clear();
+    window.addEventListener('blur', clear);
+    window.addEventListener('resize', clear);
+    window.addEventListener('orientationchange', clear);
+    document.addEventListener('visibilitychange', clear);
+    this.el.addEventListener('enter-vr', clear);
+    // Touch camera input is handled by our look area, not twice by look-controls.
+    if (window.matchMedia('(any-pointer: coarse)').matches)
+      this.view.setAttribute('look-controls', 'touchEnabled', false);
+  },
+
+  clear: function () {
+    this.releases.forEach(end => end());
+    this.releases.clear();
+    this.moveX = this.moveY = this.depthAxis = this.rollAxis = 0;
+    this.moving = this.sprint = this.locked = false;
+    if (this.knob) this.knob.style.transform = '';
+    const cutter = this.el.components['plasma-cutter'];
+    if (cutter) cutter.endPress();
+  },
+
+  tick: function () {
+    const cutter = this.el.components['plasma-cutter'];
+    if (this.locked && (!cutter || !cutter.triggerHeld || !cutter.active)) this.locked = false;
+    const text = this.locked ? 'Park blade' : 'Tether lock';
+    if (this.lockButton.textContent !== text) this.lockButton.textContent = text;
+  }
+});
+</script>
+
 </head>
 
 <body>
 
-<div id="hud">Loading Cutter Lab v6.0...</div>
+<div id="hud">Loading Tether Lab v6.1...</div>
 <div id="crosshair">+</div>
 
 <a-scene
@@ -2477,6 +2829,7 @@ AFRAME.registerComponent('plasma-cutter', {
   ledge-climb
   ability-test
   plasma-cutter
+  touch-controls
   background="color: #182333">
 
   <a-light
@@ -2589,7 +2942,7 @@ AFRAME.registerComponent('plasma-cutter', {
     align="center"
     width="2.5"
     color="white"
-    value="VR CONTROLS\nLeft stick: move\nRight stick: turn\nA: jump / ledge launch\nLeft stick click: sprint\nX: smooth / snap\nY: turning speed\nB: walking speed\nLeft trigger: reset orb\nRight trigger: weapon\nR-stick UP: equip cutter / knife\nR-stick DOWN: blade on / off\nHold trigger: guide cutter\nNew trigger tap: recall\nRight stick click: hints">
+    value="VR CONTROLS\nLeft stick: move\nRight stick: turn\nA: jump / ledge launch\nLeft stick click: sprint\nX: smooth / snap\nY: turning speed\nB: walking speed\nLeft trigger: reset orb\nRight trigger: weapon\nR-stick UP: equip cutter / knife\nR-stick DOWN: blade on / off\nHold trigger: move / rotate cutter\nRelease trigger: hover\nTrigger + R-stick CLICK: retrieve\nRight stick click: hints">
   </a-text>
 
   <a-text
@@ -2597,7 +2950,7 @@ AFRAME.registerComponent('plasma-cutter', {
     align="center"
     width="4"
     color="white"
-    value="DESCENT VR\nCUTTER LAB v6.0">
+    value="DESCENT VR\nTETHER LAB v6.1">
   </a-text>
 
   <!-- Practice target -->
