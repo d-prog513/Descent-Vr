@@ -528,14 +528,171 @@ AFRAME.registerComponent('training-v4', {
         );
     }
 
+    // Create three fixed practice platforms once.
+    if (!this.practicePlatforms) {
+      this.practicePlatforms = [
+        {
+          x: 0,
+          z: -2,
+          width: 2,
+          depth: 1.2,
+          top: 0.35,
+          color: '#4DB6AC'
+        },
+        {
+          x: 0,
+          z: -3.6,
+          width: 2,
+          depth: 1.2,
+          top: 0.70,
+          color: '#42A5F5'
+        },
+        {
+          x: 0,
+          z: -5.2,
+          width: 2,
+          depth: 1.2,
+          top: 1.05,
+          color: '#AB80E8'
+        }
+      ];
+
+      this.practicePlatforms.forEach(platform => {
+        const box = document.createElement('a-box');
+
+        box.setAttribute('position', {
+          x: platform.x,
+          y: platform.top / 2,
+          z: platform.z
+        });
+
+        box.setAttribute('width', platform.width);
+        box.setAttribute('height', platform.top);
+        box.setAttribute('depth', platform.depth);
+        box.setAttribute('color', platform.color);
+
+        this.el.appendChild(box);
+      });
+    }
+
+    const previousFeetY = this.rig.object3D.position.y;
+
+    // Apply gravity during a jump or fall.
     if (!this.grounded) {
       this.velocityY -= 9.8 * dt;
+      this.rig.object3D.position.y += this.velocityY * dt;
+    }
 
-      this.rig.object3D.position.y +=
-        this.velocityY * dt;
+    this.rig.object3D.updateWorldMatrix(true, true);
+    this.view.object3D.getWorldPosition(this.head);
 
-      if (this.rig.object3D.position.y <= 0) {
-        this.landReset();
+    const playerRadius = 0.18;
+
+    const playerHeight = THREE.MathUtils.clamp(
+      this.head.y - this.rig.object3D.position.y,
+      0.8,
+      2.2
+    );
+
+    let landingHeight = null;
+
+    // Find a platform top crossed while descending.
+    if (this.velocityY <= 0) {
+      this.practicePlatforms.forEach(platform => {
+        const overPlatform =
+          Math.abs(this.head.x - platform.x) <
+            platform.width / 2 + playerRadius * 0.5 &&
+          Math.abs(this.head.z - platform.z) <
+            platform.depth / 2 + playerRadius * 0.5;
+
+        const crossedTop =
+          previousFeetY >= platform.top - 0.02 &&
+          this.rig.object3D.position.y <= platform.top;
+
+        if (overPlatform && crossedTop) {
+          if (
+            landingHeight === null ||
+            platform.top > landingHeight
+          ) {
+            landingHeight = platform.top;
+          }
+        }
+      });
+    }
+
+    if (landingHeight !== null) {
+      this.rig.object3D.position.y = landingHeight;
+      this.velocityY = 0;
+      this.grounded = true;
+    } else if (this.rig.object3D.position.y <= 0) {
+      this.landReset();
+    }
+
+    // Resolve simple collisions against platform sides.
+    this.practicePlatforms.forEach(platform => {
+      const feetY = this.rig.object3D.position.y;
+      const bodyTop = feetY + playerHeight;
+
+      if (
+        feetY >= platform.top - 0.01 ||
+        bodyTop <= 0
+      ) {
+        return;
+      }
+
+      this.rig.object3D.updateWorldMatrix(true, true);
+      this.view.object3D.getWorldPosition(this.head);
+
+      const offsetX = this.head.x - platform.x;
+      const offsetZ = this.head.z - platform.z;
+
+      const overlapX =
+        platform.width / 2 +
+        playerRadius -
+        Math.abs(offsetX);
+
+      const overlapZ =
+        platform.depth / 2 +
+        playerRadius -
+        Math.abs(offsetZ);
+
+      if (overlapX > 0 && overlapZ > 0) {
+        if (overlapX < overlapZ) {
+          this.rig.object3D.position.x +=
+            (offsetX >= 0 ? 1 : -1) * overlapX;
+        } else {
+          this.rig.object3D.position.z +=
+            (offsetZ >= 0 ? 1 : -1) * overlapZ;
+        }
+      }
+    });
+
+    // Check whether the player has walked off a platform.
+    this.rig.object3D.updateWorldMatrix(true, true);
+    this.view.object3D.getWorldPosition(this.head);
+
+    if (
+      this.grounded &&
+      this.rig.object3D.position.y > 0
+    ) {
+      const supported = this.practicePlatforms.some(platform => {
+        const atTop =
+          Math.abs(
+            this.rig.object3D.position.y - platform.top
+          ) < 0.02;
+
+        const overPlatform =
+          Math.abs(this.head.x - platform.x) <
+            platform.width / 2 + playerRadius * 0.5 &&
+          Math.abs(this.head.z - platform.z) <
+            platform.depth / 2 + playerRadius * 0.5;
+
+        return atTop && overPlatform;
+      });
+
+      if (!supported) {
+        this.grounded = false;
+        this.velocityY = 0;
       }
     }
 
