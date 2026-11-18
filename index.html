@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Descent VR - Movement v4</title>
+<title>Descent VR - Ability Test v5</title>
 <script src="https://aframe.io/releases/1.8.0/aframe.min.js"></script>
 
 <style>
@@ -139,7 +139,7 @@ AFRAME.registerComponent('training-v4', {
 
     this.hands.forEach(hand => {
       hand.el.addEventListener('triggerdown', () => {
-        if (this.inVR()) this.placeTarget();
+        if (this.inVR() && hand.el === this.left) this.placeTarget();
       });
 
       hand.el.addEventListener('controllerconnected', () => {
@@ -872,7 +872,7 @@ AFRAME.registerComponent('training-v4', {
           : 'READY';
 
     const status =
-      'MOVEMENT v4 | ' +
+      'ABILITY TEST v5 | ' +
       (vr ? 'VR' : 'DESKTOP') + '\n' +
       'Stamina ' +
       Math.ceil(this.stamina) +
@@ -891,11 +891,12 @@ AFRAME.registerComponent('training-v4', {
       );
 
       this.hud.textContent =
-        status + '\n\n' +
+        status + ((this.el.components['ability-test'] &&
+          !this.el.components['ability-test'].hints) ? '' : '\n\n' +
         'WASD: move | Space: jump | Shift: sprint\n' +
         'Drag mouse: look | Click: short-range punch\n' +
         'R: reset orb | Aim with center +\n' +
-        'Test build: no wall/platform collision yet';
+        'F: returning knife | H: hints | Ability Test v5');
     }
   }
 });
@@ -918,6 +919,13 @@ AFRAME.registerComponent('ledge-climb', {
       top: 1.45,
       color: '#FFAA55'
     };
+
+    this.ledges = [
+      this.ledge,
+      {x: 3, z: -0.6, width: 2, depth: 1.3, top: 0.8, color: '#51BBA8'},
+      {x: 5, z: -2.8, width: 1.8, depth: 1.8, top: 2.05, color: '#538FE8'},
+      {x: 5, z: -5.2, width: 2, depth: 1.8, top: 2.65, color: '#AB80E8'}
+    ];
 
     this.hands = ['#left', '#right'].map(selector => ({
       el: document.querySelector(selector),
@@ -1031,7 +1039,8 @@ AFRAME.registerComponent('ledge-climb', {
       this.showGrip(hand, hand.grabbing);
       holding = holding || hand.grabbing;
     });
-    this.launchArrow.visible = holding;
+    const pack = this.el.components['ability-test'];
+    this.launchArrow.visible = holding && (!pack || pack.hints);
     if (holding) {
       this.launchDirection(this.previewDirection);
       // Show the initial upward-and-outward impulse, not a landing prediction.
@@ -1093,42 +1102,31 @@ AFRAME.registerComponent('ledge-climb', {
   step: function (training) {
     if (!training.practicePlatforms) return false;
 
-    // Add this ledge to the existing collision list once.
-    if (!this.mesh) {
-      training.practicePlatforms.push(this.ledge);
-
-      this.mesh = document.createElement('a-box');
-
-      this.mesh.setAttribute('position', {
-        x: this.ledge.x,
-        y: this.ledge.top / 2,
-        z: this.ledge.z
+    // Register all route ledges with the existing landing/side collision system.
+    if (!this.routeBuilt) {
+      this.routeBuilt = true;
+      this.ledges.forEach((ledge, index) => {
+        training.practicePlatforms.push(ledge);
+        const mesh = document.createElement('a-box');
+        mesh.setAttribute('position', {x: ledge.x, y: ledge.top / 2, z: ledge.z});
+        mesh.setAttribute('width', ledge.width);
+        mesh.setAttribute('height', ledge.top);
+        mesh.setAttribute('depth', ledge.depth);
+        mesh.setAttribute('color', ledge.color);
+        this.el.appendChild(mesh);
+        ledge.mesh = mesh;
+        const sign = document.createElement('a-text');
+        sign.classList.add('tutorial-hint');
+        sign.setAttribute('position', {x: ledge.x, y: ledge.top + 0.45, z: ledge.z + ledge.depth / 2 + 0.02});
+        sign.setAttribute('value', index === 0 ? 'ORIGINAL LEDGE' :
+          index === 3 ? 'SUMMIT TARGET' : 'CLIMB ROUTE ' + index);
+        sign.setAttribute('align', 'center');
+        sign.setAttribute('width', 1.7);
+        const pack = this.el.components['ability-test'];
+        sign.object3D.visible = !pack || pack.hints;
+        this.el.appendChild(sign);
       });
-
-      this.mesh.setAttribute('width', this.ledge.width);
-      this.mesh.setAttribute('height', this.ledge.top);
-      this.mesh.setAttribute('depth', this.ledge.depth);
-      this.mesh.setAttribute('color', this.ledge.color);
-
-      this.el.appendChild(this.mesh);
-
-      const sign = document.createElement('a-text');
-
-      sign.setAttribute('position', {
-        x: this.ledge.x,
-        y: this.ledge.top + 0.8,
-        z: this.ledge.z
-      });
-
-      sign.setAttribute('value',
-        'CLIMB TEST\nGrip near the top\nPull down, then release'
-      );
-
-      sign.setAttribute('align', 'center');
-      sign.setAttribute('width', '2.5');
-      sign.setAttribute('color', '#FFFFFF');
-
-      this.el.appendChild(sign);
+      this.mesh = this.ledge.mesh;
     }
 
     if (!this.el.is('vr-mode')) {
@@ -1137,7 +1135,7 @@ AFRAME.registerComponent('ledge-climb', {
     }
 
     const now = performance.now();
-    const ledge = this.ledge;
+    let ledge = this.ledge;
 
     this.rig.object3D.updateWorldMatrix(true, true);
 
@@ -1153,7 +1151,25 @@ AFRAME.registerComponent('ledge-climb', {
         return;
       }
 
-      // Find the closest point on the ledge's top.
+      let ledge = null;
+      let bestDistance = 0.22;
+      const already = this.hands.find(other => other.grabbing);
+      const candidates = already ? [already.ledge] : this.ledges;
+      candidates.forEach(candidate => {
+        const point = new THREE.Vector3(
+          THREE.MathUtils.clamp(hand.world.x, candidate.x - candidate.width / 2,
+            candidate.x + candidate.width / 2), candidate.top,
+          THREE.MathUtils.clamp(hand.world.z, candidate.z - candidate.depth / 2,
+            candidate.z + candidate.depth / 2));
+        const distance = hand.world.distanceTo(point);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          ledge = candidate;
+        }
+      });
+      if (!ledge) return;
+
+      // Find the closest point on this ledge's top.
       this.nearest.set(
         THREE.MathUtils.clamp(
           hand.world.x,
@@ -1170,6 +1186,7 @@ AFRAME.registerComponent('ledge-climb', {
 
       if (hand.world.distanceTo(this.nearest) < 0.22) {
         hand.grabbing = true;
+        hand.ledge = ledge;
 
         // Anchor at the hand's current position to avoid a snap.
         hand.anchor.copy(hand.world);
@@ -1193,6 +1210,11 @@ AFRAME.registerComponent('ledge-climb', {
     const activeHands = this.hands.filter(hand => hand.grabbing);
 
     if (activeHands.length > 0) {
+      this.ledge = activeHands[0].ledge;
+      ledge = this.ledge;
+      this.mesh = ledge.mesh;
+      this.ledges.forEach(item => item.mesh.setAttribute('color', item.color));
+      training.launchTime = 0;
       this.correction.set(0, 0, 0);
 
       activeHands.forEach(hand => {
@@ -1270,16 +1292,301 @@ AFRAME.registerComponent('ledge-climb', {
   }
 });
 </script>
+
+<script>
+AFRAME.registerComponent('ability-test', {
+  init: function () {
+    this.hints = true;
+    this.state = 'READY';
+    this.cooldown = 0;
+    this.clock = 0;
+    this.flightAge = 0;
+    this.hp = 100;
+    this.resetAt = 0;
+    this.flashUntil = 0;
+    this.lastHit = 'Aim right controller; press right trigger';
+    this.feedbackUntil = 0;
+    this.hitThisThrow = false;
+    this.origin = new THREE.Vector3();
+    this.next = new THREE.Vector3();
+    this.direction = new THREE.Vector3();
+    this.velocity = new THREE.Vector3();
+    this.deltaVector = new THREE.Vector3();
+    this.point = new THREE.Vector3();
+    this.quaternion = new THREE.Quaternion();
+    this.ray = new THREE.Ray();
+    this.box = new THREE.Box3();
+    this.targetBox = new THREE.Box3();
+    this.summit = {x: 5, z: -5.2, top: 2.65};
+    this.right = document.querySelector('#right');
+    this.view = document.querySelector('#view');
+    this.rig = document.querySelector('#rig');
+    this.handSamples = ['#left', '#right'].map(selector => ({
+      el: document.querySelector(selector), previous: new THREE.Vector3(),
+      ready: false, inside: false, nextHit: 0
+    }));
+
+    this.status = document.createElement('a-text');
+    this.status.setAttribute('position', '0 -0.19 -1.2');
+    this.status.setAttribute('align', 'center');
+    this.status.setAttribute('width', 1.35);
+    this.status.setAttribute('color', '#FFD166');
+    this.view.appendChild(this.status);
+
+    this.dummy = document.createElement('a-entity');
+    this.dummy.setAttribute('position', {x: this.summit.x, y: this.summit.top, z: this.summit.z});
+    this.bodyMaterial = new THREE.MeshStandardMaterial({color: 0x26c6da, roughness: 0.7});
+    this.dummyVisual = new THREE.Group();
+    const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.28, 0.70, 12), this.bodyMaterial);
+    torso.position.y = 0.93;
+    this.dummyVisual.add(torso);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.20, 12, 10), this.bodyMaterial);
+    head.position.y = 1.48;
+    this.dummyVisual.add(head);
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.5, 8),
+      new THREE.MeshStandardMaterial({color: 0x8795a1}));
+    post.position.y = 0.30;
+    this.dummyVisual.add(post);
+    this.dummy.setObject3D('mesh', this.dummyVisual);
+    this.el.appendChild(this.dummy);
+    this.targetBox.min.set(this.summit.x - 0.30, this.summit.top + 0.55, this.summit.z - 0.30);
+    this.targetBox.max.set(this.summit.x + 0.30, this.summit.top + 1.70, this.summit.z + 0.30);
+    this.health = document.createElement('a-text');
+    this.health.setAttribute('position', {x: this.summit.x, y: this.summit.top + 2, z: this.summit.z});
+    this.health.setAttribute('align', 'center');
+    this.health.setAttribute('width', 2.6);
+    this.health.setAttribute('value', 'SUMMIT DUMMY\nHP 100 / 100');
+    this.el.appendChild(this.health);
+
+    this.knifeRoot = new THREE.Group();
+    this.knifeVisual = new THREE.Group();
+    const bladeMaterial = new THREE.MeshStandardMaterial({color: 0xe0f7ff, metalness: 0.45, roughness: 0.3});
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.012, 0.26), bladeMaterial);
+    blade.position.z = -0.12;
+    this.knifeVisual.add(blade);
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.032, 0.09, 4), bladeMaterial);
+    tip.rotation.x = -Math.PI / 2;
+    tip.position.z = -0.295;
+    this.knifeVisual.add(tip);
+    const handle = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.025, 0.13),
+      new THREE.MeshStandardMaterial({color: 0xffb74d}));
+    handle.position.z = 0.07;
+    this.knifeVisual.add(handle);
+    this.knifeRoot.add(this.knifeVisual);
+    this.knifeRoot.visible = false;
+    this.el.object3D.add(this.knifeRoot);
+    this.bladeForward = new THREE.Vector3(0, 0, -1);
+
+    this.right.addEventListener('triggerdown', () => {
+      if (this.el.is('vr-mode')) this.throwKnife();
+    });
+    this.right.addEventListener('thumbstickdown', () => {
+      if (this.el.is('vr-mode')) this.toggleHints();
+    });
+    window.addEventListener('keydown', event => {
+      if (event.repeat || this.el.is('vr-mode')) return;
+      if (event.target.closest && event.target.closest('input,textarea,[contenteditable]')) return;
+      if (event.code === 'KeyF') { event.preventDefault(); this.throwKnife(); }
+      if (event.code === 'KeyH') { event.preventDefault(); this.toggleHints(); }
+    });
+    ['enter-vr', 'exit-vr'].forEach(name => this.el.addEventListener(name, () => this.cancelKnife()));
+    this.right.addEventListener('controllerdisconnected', () => this.cancelKnife());
+    window.addEventListener('blur', () => this.cancelKnife());
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this.cancelKnife();
+    });
+  },
+
+  toggleHints: function () {
+    this.hints = !this.hints;
+    const training = this.el.components['training-v4'];
+    if (training) training.lastHUD = '';
+    this.el.querySelectorAll('.tutorial-hint').forEach(el => {
+      el.object3D.visible = this.hints;
+    });
+    const climbing = this.el.components['ledge-climb'];
+    if (climbing) climbing.updateGripVisuals();
+    this.lastHit = 'Hints ' + (this.hints ? 'ON' : 'OFF');
+    this.feedbackUntil = this.clock + 1.5;
+  },
+
+  cancelKnife: function () {
+    this.state = 'READY';
+    this.cooldown = 0;
+    this.flightAge = 0;
+    this.knifeRoot.visible = false;
+    this.handSamples.forEach(hand => { hand.ready = false; });
+  },
+
+  throwKnife: function () {
+    if (document.hidden || this.state !== 'READY' || this.cooldown > 0) return;
+    const vr = this.el.is('vr-mode');
+    if (vr) {
+      const session = this.el.renderer.xr.getSession();
+      if (session && session.visibilityState !== 'visible') return;
+      const training = this.el.components['training-v4'];
+      if (!training || !training.hands.some(hand => hand.el === this.right && hand.connected)) return;
+    }
+    const source = vr ? this.right : this.view;
+    this.rig.object3D.updateWorldMatrix(true, true);
+    source.object3D.getWorldPosition(this.origin);
+    source.object3D.getWorldQuaternion(this.quaternion);
+    this.direction.set(0, 0, -1).applyQuaternion(this.quaternion).normalize();
+    this.knifeRoot.position.copy(this.origin);
+    this.velocity.copy(this.direction).multiplyScalar(10);
+    this.knifeRoot.quaternion.setFromUnitVectors(this.bladeForward, this.direction);
+    this.knifeVisual.rotation.set(0, 0, 0);
+    this.distanceTravelled = 0;
+    this.flightAge = 0;
+    this.hitThisThrow = false;
+    this.state = 'OUTBOUND';
+    this.knifeRoot.visible = true;
+  },
+
+  damageDummy: function (amount, source) {
+    if (this.hp <= 0) return;
+    this.hp = Math.max(0, this.hp - amount);
+    this.lastHit = source + ' HIT -' + amount;
+    this.feedbackUntil = this.clock + 1.5;
+    this.flashUntil = this.clock + 0.18;
+    if (this.hp === 0) {
+      this.lastHit = 'DUMMY COMPLETE! Resetting on summit';
+      this.resetAt = this.clock + 2;
+      this.feedbackUntil = this.clock + 2;
+    }
+    this.health.setAttribute('value', this.hp > 0 ?
+      'SUMMIT DUMMY\nHP ' + this.hp + ' / 100' : 'COMPLETE!\nReset in 2 seconds');
+  },
+
+  segmentDistance: function (start, direction, length, box) {
+    this.ray.set(start, direction);
+    const hit = this.ray.intersectBox(box, this.point);
+    if (!hit) return Infinity;
+    const distance = start.distanceTo(hit);
+    return distance <= length + 0.0001 ? distance : Infinity;
+  },
+
+  stepKnife: function (dt, training) {
+    if (this.state === 'READY') return;
+    this.flightAge += dt;
+    if (this.flightAge > 6) { this.cancelKnife(); return; }
+    this.knifeVisual.rotation.x += dt * 18;
+    if (this.state === 'OUTBOUND') {
+      const length = Math.min(10 * dt, 9 - this.distanceTravelled);
+      this.direction.copy(this.velocity).normalize();
+      const position = this.knifeRoot.position;
+      const targetDistance = this.hp > 0 && !this.hitThisThrow ?
+        this.segmentDistance(position, this.direction, length, this.targetBox) : Infinity;
+      let wallDistance = Infinity;
+      (training.practicePlatforms || []).forEach(platform => {
+        this.box.min.set(platform.x - platform.width / 2, 0, platform.z - platform.depth / 2);
+        this.box.max.set(platform.x + platform.width / 2, platform.top, platform.z + platform.depth / 2);
+        // If a throw starts inside a solid, recall it rather than shoot through.
+        const distance = this.box.containsPoint(position) ? 0 :
+          this.segmentDistance(position, this.direction, length, this.box);
+        wallDistance = Math.min(wallDistance, distance);
+      });
+      if (Number.isFinite(targetDistance) && targetDistance < wallDistance) {
+        position.addScaledVector(this.direction, targetDistance);
+        this.hitThisThrow = true;
+        this.damageDummy(25, 'KNIFE');
+        this.state = 'RETURNING';
+      } else if (Number.isFinite(wallDistance)) {
+        position.addScaledVector(this.direction, Math.max(0, wallDistance - 0.025));
+        this.state = 'RETURNING';
+        this.lastHit = 'BLOCKED - knife returning';
+        this.feedbackUntil = this.clock + 1;
+      } else {
+        position.addScaledVector(this.direction, length);
+        this.distanceTravelled += length;
+        if (this.distanceTravelled >= 8.999) this.state = 'RETURNING';
+      }
+    } else if (this.state === 'RETURNING') {
+      const source = this.el.is('vr-mode') ? this.right : this.view;
+      this.rig.object3D.updateWorldMatrix(true, true);
+      source.object3D.getWorldPosition(this.origin);
+      this.deltaVector.copy(this.origin).sub(this.knifeRoot.position);
+      const distance = this.deltaVector.length();
+      if (distance <= Math.max(0.15, 14 * dt)) {
+        this.knifeRoot.visible = false;
+        this.state = 'READY';
+        this.cooldown = 0.45;
+      } else {
+        this.direction.copy(this.deltaVector).normalize();
+        this.knifeRoot.position.addScaledVector(this.direction, 14 * dt);
+        this.knifeRoot.quaternion.setFromUnitVectors(this.bladeForward, this.direction);
+      }
+    }
+  },
+
+  tick: function (time, delta) {
+    if (document.hidden || !delta || delta > 100) return;
+    if (this.el.is('vr-mode')) {
+      const session = this.el.renderer.xr.getSession();
+      if (session && session.visibilityState !== 'visible') { this.cancelKnife(); return; }
+    }
+    const training = this.el.components['training-v4'];
+    if (!training) return;
+    const dt = delta / 1000;
+    this.clock += dt;
+    this.cooldown = Math.max(0, this.cooldown - dt);
+    this.stepKnife(dt, training);
+    if (this.resetAt && this.clock >= this.resetAt) {
+      this.resetAt = 0;
+      this.hp = 100;
+      this.health.setAttribute('value', 'SUMMIT DUMMY\nHP 100 / 100');
+    }
+    this.bodyMaterial.color.setHex(this.hp === 0 ? 0xffd54f :
+      this.clock < this.flashUntil ? 0xff7043 : 0x26c6da);
+    this.view.object3D.getWorldPosition(this.origin);
+    this.health.object3D.lookAt(this.origin);
+
+    const climbing = this.el.components['ledge-climb'];
+    this.handSamples.forEach(sample => {
+      const tracked = training.hands.find(hand => hand.el === sample.el);
+      if (!this.el.is('vr-mode') || !tracked || !tracked.connected) { sample.ready = false; return; }
+      const local = sample.el.object3D.position;
+      sample.el.object3D.getWorldPosition(this.next);
+      this.targetBox.clampPoint(this.next, this.point);
+      const touching = this.point.distanceTo(this.next) < 0.10;
+      const gripping = climbing && climbing.hands.some(hand => hand.el === sample.el && hand.grabbing);
+      if (sample.ready && !gripping && touching && !sample.inside &&
+          local.distanceTo(sample.previous) / dt >= 0.45 && this.clock >= sample.nextHit) {
+        this.damageDummy(20, 'PUNCH');
+        sample.nextHit = this.clock + 0.35;
+      }
+      sample.previous.copy(local);
+      sample.ready = true;
+      sample.inside = touching;
+    });
+
+    const holding = climbing && climbing.hands.some(hand => hand.grabbing);
+    const state = holding ? 'HOLD | Stamina ' + Math.ceil(training.stamina) + '/100 (no drain)' : '';
+    const knifeState = this.state === 'READY' && this.cooldown > 0 ? 'RECOVERING' : this.state;
+    let text = 'ABILITY TEST v5 | KNIFE ' + knifeState;
+    if (state) text += '\n' + state;
+    if (this.clock < this.feedbackUntil) text += '\n' + this.lastHit;
+    else if (this.hints) text += this.el.is('vr-mode') ?
+      '\nRight trigger: knife | R-stick click: hints' : '\nF: knife | H: hints';
+    if (text !== this.lastStatus) {
+      this.status.setAttribute('value', text);
+      this.lastStatus = text;
+    }
+  }
+});
+</script>
+
 </head>
 
 <body>
 
-<div id="hud">Loading Movement v4...</div>
+<div id="hud">Loading Ability Test v5...</div>
 <div id="crosshair">+</div>
 
 <a-scene
   training-v4
   ledge-climb
+  ability-test
   background="color: #182333">
 
   <a-light
@@ -1380,19 +1687,19 @@ AFRAME.registerComponent('ledge-climb', {
 
   <!-- Instructions -->
 
-  <a-plane
+  <a-plane class="tutorial-hint"
     position="-3 1.7 -3"
     width="2.8"
     height="2.4"
     color="#17202B">
   </a-plane>
 
-  <a-text
+  <a-text class="tutorial-hint"
     position="-3 1.7 -2.98"
     align="center"
     width="2.5"
     color="white"
-    value="VR CONTROLS\nLeft stick: move\nRight stick: turn\nA: jump\nHold right grip: sprint\nX: smooth / snap\nY: turning speed\nB: walking speed\nTrigger: reset orb">
+    value="VR CONTROLS\nLeft stick: move\nRight stick: turn\nA: jump / ledge launch\nLeft stick click: sprint\nX: smooth / snap\nY: turning speed\nB: walking speed\nLeft trigger: reset orb\nRight trigger: knife\nRight stick click: hints">
   </a-text>
 
   <a-text
@@ -1400,7 +1707,7 @@ AFRAME.registerComponent('ledge-climb', {
     align="center"
     width="4"
     color="white"
-    value="DESCENT VR\nMOVEMENT v4">
+    value="DESCENT VR\nABILITY TEST v5">
   </a-text>
 
   <!-- Practice target -->
