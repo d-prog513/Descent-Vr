@@ -399,16 +399,13 @@ AFRAME.registerComponent('training-v4', {
       this.head.z - this.after.z;
 
     this.rig.object3D.updateWorldMatrix(true, true);
-    // Rebase artificial turn only; physical pulling still moves the player.
-    // Controller visuals swivel with the rig, not fixed wall-hand IK.
+    // Rebase artificial turning, not physical pulling.
     grabbed.forEach(hand => {
       hand.el.object3D.getWorldPosition(this.after);
       hand.anchor.add(this.after.sub(hand.world));
       hand.el.object3D.getWorldPosition(hand.world);
     });
-    this.hands.forEach(hand => {
-      hand.ready = false;
-    });
+    this.hands.forEach(hand => { hand.ready = false; });
   },
 
   tick: function (time, delta) {
@@ -432,7 +429,6 @@ AFRAME.registerComponent('training-v4', {
     const now = performance.now();
     const vr = this.inVR();
 
-    // Turn before ledge holding pauses locomotion.
     if (vr) {
       const turn = this.axes.turn;
       const amount = Math.abs(turn);
@@ -965,6 +961,88 @@ AFRAME.registerComponent('ledge-climb', {
 
     this.wasClimbing = false;
     this.cooldownUntil = 0;
+
+    // Scene-space proxy grips stay on the structure, not the rotating rig.
+    this.hands.forEach((hand, index) => {
+      hand.contact = new THREE.Vector3();
+      hand.proxy = new THREE.Group();
+      const material = new THREE.MeshStandardMaterial({
+        color: index === 0 ? 0x55ddff : 0xffd166,
+        roughness: 0.8
+      });
+      const palm = new THREE.Mesh(
+        new THREE.BoxGeometry(0.085, 0.035, 0.10), material
+      );
+      palm.position.set(0, 0.025, 0.018);
+      hand.proxy.add(palm);
+      for (let finger = 0; finger < 4; finger++) {
+        const tip = new THREE.Mesh(
+          new THREE.BoxGeometry(0.016, 0.045, 0.028), material
+        );
+        tip.position.set((finger - 1.5) * 0.021, -0.004, -0.036);
+        hand.proxy.add(tip);
+      }
+      hand.proxy.visible = false;
+      this.el.object3D.add(hand.proxy);
+    });
+    this.launchArrow = new THREE.ArrowHelper(
+      new THREE.Vector3(0, 0, 1), new THREE.Vector3(),
+      0.85, 0xffd166, 0.18, 0.10
+    );
+    this.launchArrow.visible = false;
+    this.el.object3D.add(this.launchArrow);
+    this.previewHead = new THREE.Vector3();
+    this.previewDirection = new THREE.Vector3();
+  },
+
+  launchDirection: function (out) {
+    this.rig.object3D.updateWorldMatrix(true, true);
+    this.view.object3D.getWorldPosition(this.head);
+    out.set(this.head.x - this.ledge.x, 0,
+      this.head.z - this.ledge.z);
+    if (out.lengthSq() < 0.01) {
+      const rotation = new THREE.Quaternion();
+      this.view.object3D.getWorldQuaternion(rotation);
+      out.set(0, 0, 1).applyQuaternion(rotation);
+      out.y = 0;
+    }
+    if (out.lengthSq() < 0.01) out.set(0, 0, 1);
+    return out.normalize();
+  },
+
+  showGrip: function (hand, visible) {
+    hand.proxy.visible = visible;
+    const model = hand.el.getObject3D('mesh');
+    if (visible) {
+      if (model && hand.hiddenModel !== model) {
+        hand.hiddenModel = model;
+        hand.modelWasVisible = model.visible;
+      }
+      if (model) model.visible = false;
+    } else if (hand.hiddenModel) {
+      hand.hiddenModel.visible = hand.modelWasVisible;
+      hand.hiddenModel = null;
+    }
+  },
+
+  updateGripVisuals: function () {
+    let holding = false;
+    this.hands.forEach(hand => {
+      this.showGrip(hand, hand.grabbing);
+      holding = holding || hand.grabbing;
+    });
+    this.launchArrow.visible = holding;
+    if (holding) {
+      this.launchDirection(this.previewDirection);
+      // Show the initial upward-and-outward impulse, not a landing prediction.
+      this.previewDirection.multiplyScalar(3);
+      this.previewDirection.y = 4.2;
+      this.previewDirection.normalize();
+      this.view.object3D.getWorldPosition(this.previewHead);
+      this.previewHead.y -= 0.35;
+      this.launchArrow.position.copy(this.previewHead);
+      this.launchArrow.setDirection(this.previewDirection);
+    }
   },
   
   launch: function (training) {
@@ -975,29 +1053,7 @@ AFRAME.registerComponent('ledge-climb', {
     this.rig.object3D.updateWorldMatrix(true, true);
     this.view.object3D.getWorldPosition(this.head);
 
-    // Push away from the center of the ledge.
-    const direction = new THREE.Vector3(
-      this.head.x - this.ledge.x,
-      0,
-      this.head.z - this.ledge.z
-    );
-
-    // Fallback if directly above the ledge's center.
-    if (direction.lengthSq() < 0.01) {
-      const rotation = new THREE.Quaternion();
-      this.view.object3D.getWorldQuaternion(rotation);
-
-      direction.set(0, 0, 1)
-        .applyQuaternion(rotation);
-
-      direction.y = 0;
-    }
-
-    if (direction.lengthSq() < 0.01) {
-      direction.set(0, 0, 1);
-    }
-
-    direction.normalize();
+    const direction = this.launchDirection(new THREE.Vector3());
 
     this.releaseAll();
     this.cooldownUntil = performance.now() + 450;
@@ -1023,7 +1079,9 @@ AFRAME.registerComponent('ledge-climb', {
     this.hands.forEach(hand => {
       hand.held = false;
       hand.grabbing = false;
+      this.showGrip(hand, false);
     });
+    if (this.launchArrow) this.launchArrow.visible = false;
 
     this.wasClimbing = false;
 
@@ -1115,8 +1173,22 @@ AFRAME.registerComponent('ledge-climb', {
 
         // Anchor at the hand's current position to avoid a snap.
         hand.anchor.copy(hand.world);
+        // Visual contact is separate from the rebased movement anchor.
+        hand.contact.copy(this.nearest);
+        hand.proxy.position.copy(hand.contact);
+        const dx = (hand.world.x - ledge.x) / (ledge.width / 2);
+        const dz = (hand.world.z - ledge.z) / (ledge.depth / 2);
+        const outside = new THREE.Vector3();
+        if (Math.abs(dx) > Math.abs(dz)) {
+          outside.set(dx >= 0 ? 1 : -1, 0, 0);
+        } else {
+          outside.set(0, 0, dz >= 0 ? 1 : -1);
+        }
+        hand.proxy.rotation.y = Math.atan2(outside.x, outside.z);
       }
     });
+
+    this.updateGripVisuals();
 
     const activeHands = this.hands.filter(hand => hand.grabbing);
 
@@ -1146,7 +1218,9 @@ AFRAME.registerComponent('ledge-climb', {
       this.wasClimbing = true;
       this.mesh.setAttribute('color', '#FFD54F');
 
-      // Pause ordinary locomotion and gravity while holding.
+      this.updateGripVisuals();
+
+      // No stamina drain while holding. Pause locomotion and gravity.
       return true;
     }
 
