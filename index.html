@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Descent VR - Wrist Lab v6.2.4</title>
+<title>Descent VR - Wrist Lab v6.2.5</title>
 <script src="https://aframe.io/releases/1.8.0/aframe.min.js"></script>
 
 <style>
@@ -947,7 +947,7 @@ AFRAME.registerComponent('training-v4', {
           : 'READY';
 
     const status =
-      'WRIST LAB v6.2.4 | ' +
+      'WRIST LAB v6.2.5 | ' +
       (vr ? 'VR' : 'DESKTOP') + '\n' +
       'Stamina ' +
       Math.ceil(this.stamina) +
@@ -2030,7 +2030,7 @@ AFRAME.registerComponent('ability-test', {
     const state = holding ? 'HOLD | Stamina ' + Math.ceil(training.stamina) + '/100 (grip costs 0)' : '';
     const knifeState = this.state === 'READY' && this.cooldown > 0 ? 'RECOVERING' : this.state;
     const cutter = this.el.components['plasma-cutter'];
-    let text = 'WRIST LAB v6.2.4 | ' + (cutter && cutter.active ?
+    let text = 'WRIST LAB v6.2.5 | ' + (cutter && cutter.active ?
       'CUTTER ' + cutter.state + (cutter.ignited ? ' ON' : ' OFF') +
       (cutter.guiding ? ' | TETHER -2/s' : '') +
       (cutter.state !== 'HELD' ? ' | ' + cutter.root.position.distanceTo(cutter.origin).toFixed(1) + 'm' : '') : 'KNIFE ' + knifeState);
@@ -2108,6 +2108,9 @@ AFRAME.registerComponent('plasma-cutter', {
     this.nextSwing = 0;
     this.armed = {dummy: false, orb: false};
     this.nextHit = {dummy: 0, orb: 0};
+    this.returnHits = {dummy: false, orb: false};
+    this.returnArmed = {dummy: true, orb: true};
+    this.returnBlocked = false;
     this.contact = {dummy: new THREE.Vector3(), orb: new THREE.Vector3()};
     ['origin', 'aim', 'direction', 'desired', 'velocity', 'end', 'start',
       'tip', 'base', 'localTip', 'localBase', 'oldTip', 'oldBase', 'sweepStart',
@@ -2368,6 +2371,18 @@ AFRAME.registerComponent('plasma-cutter', {
     this.safetyReturn = safety === true || (this.safetyReturn && !starting);
     this.returnAge = 0;
     this.remoteHistory = false;
+    if (starting) {
+      this.returnHits = {dummy: false, orb: false};
+      this.returnBlocked = false;
+      this.poseDirection.copy(this.forward).applyQuaternion(this.root.quaternion);
+      this.remoteOldBase.copy(this.root.position).addScaledVector(this.poseDirection, 0.15);
+      this.remoteOldTip.copy(this.root.position).addScaledVector(this.poseDirection, 1.05);
+      const touching = {dummy: false, orb: false};
+      const training = this.el.components['training-v4'];
+      this.testBladeSegment(this.remoteOldBase, this.remoteOldTip, training, touching);
+      this.returnArmed = {dummy: !touching.dummy, orb: !touching.orb};
+      this.remoteHistory = true;
+    }
     this.clearTrigger();
     if (starting) this.feedback().playEffect('retrieve');
     if (text) this.message(text);
@@ -2628,6 +2643,8 @@ AFRAME.registerComponent('plasma-cutter', {
   },
 
   stepRemoteDamage: function (dt, training) {
+    const returning = this.state === 'RETURNING';
+    if (returning && (this.safetyReturn || this.returnAge > 6 || this.returnBlocked)) return;
     if (!this.ignited || this.bladeAmount < 0.9) { this.remoteHistory = false; return; }
     this.poseDirection.copy(this.forward).applyQuaternion(this.root.quaternion);
     this.remoteBase.copy(this.root.position).addScaledVector(this.poseDirection, 0.15);
@@ -2638,6 +2655,20 @@ AFRAME.registerComponent('plasma-cutter', {
       this.remoteHistory = true;
       return;
     }
+    // Recall still passes scenery for recovery, but cannot damage through that scenery.
+    if (returning) {
+      const fx = this.feedback();
+      for (const pair of [[this.remoteOldBase, this.remoteBase], [this.remoteOldTip, this.remoteTip]]) {
+        this.sweepDirection.copy(pair[1]).sub(pair[0]);
+        const distance = this.sweepDirection.length();
+        if (distance > 0.0001) {
+          this.sweepDirection.multiplyScalar(1 / distance);
+          if (Number.isFinite(fx.blockingDistance(pair[0], this.sweepDirection, distance, training))) {
+            this.returnBlocked = true; return;
+          }
+        }
+      }
+    }
     const travel = Math.max(this.remoteTip.distanceTo(this.remoteOldTip), this.remoteBase.distanceTo(this.remoteOldBase));
     const hits = {dummy: false, orb: false};
     const steps = Math.min(32, Math.max(1, Math.ceil(travel / 0.035)));
@@ -2647,11 +2678,23 @@ AFRAME.registerComponent('plasma-cutter', {
       this.testBladeSegment(this.sweepStart, this.sweepTip, training, hits);
     }
     ['dummy', 'orb'].forEach(kind => {
-      if (!hits[kind]) this.armed[kind] = true;
-      if (hits[kind] && this.armed[kind] && travel / dt >= 0.45 && this.clock >= this.nextHit[kind]) {
-        this.damageTarget(kind, 25, training);
-        this.armed[kind] = false;
-        this.nextHit[kind] = this.clock + 0.4;
+      if (returning) {
+        if (!hits[kind]) this.returnArmed[kind] = true;
+        if (hits[kind] && this.returnArmed[kind] && !this.returnHits[kind] && travel / dt >= 0.45) {
+          this.damageTarget(kind, 12, training);
+          this.returnHits[kind] = true;
+          this.returnArmed[kind] = false;
+          this.armed[kind] = false;
+          this.nextHit[kind] = this.clock + 0.4;
+          this.message('RETURN STRIKE -12');
+        }
+      } else {
+        if (!hits[kind]) this.armed[kind] = true;
+        if (hits[kind] && this.armed[kind] && travel / dt >= 0.45 && this.clock >= this.nextHit[kind]) {
+          this.damageTarget(kind, 25, training);
+          this.armed[kind] = false;
+          this.nextHit[kind] = this.clock + 0.4;
+        }
       }
     });
     this.remoteOldBase.copy(this.remoteBase);
@@ -2667,8 +2710,11 @@ AFRAME.registerComponent('plasma-cutter', {
       this.home.copy(this.origin);
       this.offset.copy(this.home).sub(this.root.position);
       const distance = this.offset.length();
+      // Re-seed after pause/tracking resets before moving, so no return segment is skipped.
+      if (!this.remoteHistory && !this.safetyReturn && this.returnAge <= 6) this.stepRemoteDamage(dt, training);
       if (distance <= Math.max(0.16, 15 * dt) || this.returnAge > 6) {
         this.root.position.copy(this.home);
+        if (this.returnAge <= 6 && distance > 0.02) this.stepRemoteDamage(dt, training);
         this.state = 'HELD';
         this.safetyReturn = false;
         this.cooldown = 0.4;
@@ -2683,6 +2729,7 @@ AFRAME.registerComponent('plasma-cutter', {
         this.root.position.addScaledVector(this.offset, 15 * dt);
         this.root.quaternion.rotateTowards(this.handWorldQuaternion, 8 * dt);
         this.velocity.copy(this.offset).multiplyScalar(15);
+        this.stepRemoteDamage(dt, training);
       }
       return;
     }
@@ -2979,7 +3026,7 @@ AFRAME.registerComponent('touch-controls', {
     if (this.sprintButton.textContent !== sprintText) this.sprintButton.textContent = sprintText;
     this.sprintButton.classList.toggle('active',this.sprint);
     this.sprintButton.setAttribute('aria-pressed',String(this.sprint));
-    const status = 'v6.2.4 | ' + (selected ? 'CUTTER' : 'KNIFE') + (away ? ' - ' + cutter.state : '') +
+    const status = 'v6.2.5 | ' + (selected ? 'CUTTER' : 'KNIFE') + (away ? ' - ' + cutter.state : '') +
       ' | ' + Math.ceil(training.stamina) + '%';
     if (this.status.textContent !== status) this.status.textContent = status;
   }
@@ -3374,7 +3421,7 @@ AFRAME.registerComponent('input-layout', {
 
 <body>
 
-<div id="hud">Loading Wrist Lab v6.2.4...</div>
+<div id="hud">Loading Wrist Lab v6.2.5...</div>
 <div id="crosshair">+</div>
 
 <a-scene
@@ -3492,7 +3539,7 @@ AFRAME.registerComponent('input-layout', {
     align="center"
     width="4"
     color="white"
-    value="DESCENT VR\nWRIST LAB v6.2.4">
+    value="DESCENT VR\nWRIST LAB v6.2.5">
   </a-text>
 
   <!-- Practice target -->
