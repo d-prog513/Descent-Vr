@@ -4,33 +4,78 @@
   <meta charset="utf-8">
   <meta name="viewport"
         content="width=device-width, initial-scale=1">
-  <title>Descent VR — Punch Test</title>
+  <title>Descent VR — Movement v3</title>
   <script src="https://aframe.io/releases/1.8.0/aframe.min.js"></script>
 
   <script>
-    AFRAME.registerComponent('punch-test', {
+    AFRAME.registerComponent('training', {
       init: function () {
-        this.camera = document.querySelector('#view');
-        this.target = document.querySelector('#target');
-        this.label = document.querySelector('#label');
-        this.health = 100;
+        const $ = selector => document.querySelector(selector);
+
+        this.rig = $('#rig');
+        this.camera = $('#view');
+        this.target = $('#target');
+        this.label = $('#health');
+        this.status = $('#status');
+        this.left = $('#left');
+        this.right = $('#right');
+
+        this.move = {x: 0, y: 0};
+        this.turn = 0;
+        this.snapReady = true;
+        this.mode = 'smooth';
+        this.turnIndex = 1;
+        this.walkIndex = 0;
+        this.turnSpeeds = [30, 60, 90];
+        this.walkSpeeds = [1, 1.5, 2];
+
+        this.hp = 100;
         this.flashUntil = 0;
         this.resetAt = 0;
         this.placeAt = 0;
 
         this.head = new THREE.Vector3();
+        this.after = new THREE.Vector3();
         this.forward = new THREE.Vector3();
+        this.side = new THREE.Vector3();
         this.center = new THREE.Vector3();
-        this.rotation = new THREE.Quaternion();
+        this.quaternion = new THREE.Quaternion();
 
-        this.hands = ['#left', '#right'].map(selector => ({
-          el: document.querySelector(selector),
-          current: new THREE.Vector3(),
+        this.hands = [this.left, this.right].map(el => ({
+          el: el,
           previous: new THREE.Vector3(),
+          world: new THREE.Vector3(),
           ready: false,
-          inside: false,
+          inside: true,
           nextHit: 0
         }));
+
+        this.left.addEventListener('thumbstickmoved', event => {
+          this.move.x = event.detail.x;
+          this.move.y = event.detail.y;
+        });
+
+        this.right.addEventListener('thumbstickmoved', event => {
+          this.turn = event.detail.x;
+        });
+
+        this.left.addEventListener('xbuttondown', () => {
+          this.mode = this.mode === 'smooth' ? 'snap' : 'smooth';
+          this.snapReady = false;
+          this.updateStatus();
+        });
+
+        this.left.addEventListener('ybuttondown', () => {
+          this.turnIndex = (this.turnIndex + 1) %
+                           this.turnSpeeds.length;
+          this.updateStatus();
+        });
+
+        this.right.addEventListener('bbuttondown', () => {
+          this.walkIndex = (this.walkIndex + 1) %
+                           this.walkSpeeds.length;
+          this.updateStatus();
+        });
 
         this.hands.forEach(hand => {
           hand.el.addEventListener('triggerdown', () => {
@@ -43,24 +88,61 @@
 
           hand.el.addEventListener('controllerdisconnected', () => {
             hand.ready = false;
+            this.clearInput();
           });
         });
 
         this.el.addEventListener('enter-vr', () => {
-          this.hands.forEach(hand => { hand.ready = false; });
+          this.clearInput();
           this.placeAt = performance.now() + 1000;
+          this.hands.forEach(hand => { hand.ready = false; });
         });
+
+        this.el.addEventListener('exit-vr', () => {
+          this.clearInput();
+          this.hands.forEach(hand => { hand.ready = false; });
+        });
+
+        window.addEventListener('blur', () => this.clearInput());
+        document.addEventListener('visibilitychange', () => {
+          this.clearInput();
+          this.hands.forEach(hand => { hand.ready = false; });
+        });
+
+        this.updateStatus();
       },
 
-      setLabel: function (message) {
-        this.label.setAttribute('value', message);
+      clearInput: function () {
+        this.move.x = 0;
+        this.move.y = 0;
+        this.turn = 0;
+        this.snapReady = true;
+      },
+
+      updateStatus: function () {
+        const turnText = this.mode === 'smooth'
+          ? 'Smooth ' + this.turnSpeeds[this.turnIndex] + ' deg/s'
+          : 'Snap 30 deg';
+
+        this.status.setAttribute('value',
+          'MOVEMENT v3\n' +
+          'Turn: ' + turnText + '\n' +
+          'Walk: ' + this.walkSpeeds[this.walkIndex] + ' m/s\n\n' +
+          'Left stick: walk / strafe\n' +
+          'Right stick: turn\n' +
+          'X: smooth / snap\n' +
+          'Y: smooth-turn speed\n' +
+          'B: walking speed\n' +
+          'Either trigger: reset orb'
+        );
       },
 
       placeTarget: function () {
         this.camera.object3D.getWorldPosition(this.head);
-        this.camera.object3D.getWorldQuaternion(this.rotation);
+        this.camera.object3D.getWorldQuaternion(this.quaternion);
 
-        this.forward.set(0, 0, -1).applyQuaternion(this.rotation);
+        this.forward.set(0, 0, -1)
+          .applyQuaternion(this.quaternion);
         this.forward.y = 0;
 
         if (this.forward.lengthSq() < 0.01) {
@@ -74,14 +156,13 @@
 
         this.target.object3D.position.copy(this.center);
         this.label.object3D.position.copy(this.center);
-        this.label.object3D.position.y += 0.36;
-        this.label.object3D.lookAt(this.head);
+        this.label.object3D.position.y += 0.30;
 
-        this.health = 100;
+        this.hp = 100;
         this.resetAt = 0;
         this.flashUntil = 0;
         this.target.setAttribute('color', '#26C6DA');
-        this.setLabel('HP 100 / 100');
+        this.label.setAttribute('value', 'HP 100 / 100');
 
         this.hands.forEach(hand => {
           hand.ready = false;
@@ -90,26 +171,115 @@
         });
       },
 
+      rotatePlayer: function (angle) {
+        this.camera.object3D.getWorldPosition(this.head);
+
+        this.rig.object3D.rotation.y += angle;
+        this.rig.object3D.updateWorldMatrix(true, true);
+
+        this.camera.object3D.getWorldPosition(this.after);
+
+        this.rig.object3D.position.x += this.head.x - this.after.x;
+        this.rig.object3D.position.z += this.head.z - this.after.z;
+        this.rig.object3D.updateWorldMatrix(true, true);
+      },
+
       tick: function (time, delta) {
         if (!this.el.is('vr-mode')) return;
 
+        if (!delta || delta > 100) {
+          this.hands.forEach(hand => { hand.ready = false; });
+          return;
+        }
+
+        const dt = delta / 1000;
         const now = performance.now();
+        const deadzone = 0.18;
+
+        // Right-stick turning.
+        const turnMagnitude = Math.abs(this.turn);
+
+        if (turnMagnitude < 0.25) this.snapReady = true;
+
+        if (this.mode === 'smooth' &&
+            turnMagnitude > deadzone) {
+          const amount = (turnMagnitude - deadzone) /
+                         (1 - deadzone);
+          const rate = THREE.MathUtils.degToRad(
+            this.turnSpeeds[this.turnIndex]
+          );
+          this.rotatePlayer(
+            -Math.sign(this.turn) * amount * rate * dt
+          );
+        }
+
+        if (this.mode === 'snap' &&
+            turnMagnitude > 0.65 &&
+            this.snapReady) {
+          this.rotatePlayer(
+            -Math.sign(this.turn) * THREE.MathUtils.degToRad(30)
+          );
+          this.snapReady = false;
+        }
+
+        // Head-relative walking on a flat surface.
+        let x = this.move.x;
+        let y = this.move.y;
+        const magnitude = Math.hypot(x, y);
+
+        if (magnitude > deadzone) {
+          const amount = Math.min(
+            1, (magnitude - deadzone) / (1 - deadzone)
+          );
+
+          x = x / magnitude * amount;
+          y = y / magnitude * amount;
+
+          this.camera.object3D.getWorldQuaternion(this.quaternion);
+          this.forward.set(0, 0, -1)
+            .applyQuaternion(this.quaternion);
+          this.forward.y = 0;
+
+          if (this.forward.lengthSq() > 0.01) {
+            this.forward.normalize();
+            this.side.set(-this.forward.z, 0, this.forward.x);
+
+            const distance = this.walkSpeeds[this.walkIndex] * dt;
+            this.rig.object3D.position
+              .addScaledVector(this.forward, -y * distance)
+              .addScaledVector(this.side, x * distance);
+          }
+        }
+
+        // Virtual walking boundary, not physical collision.
+        this.rig.object3D.updateWorldMatrix(true, true);
+        this.camera.object3D.getWorldPosition(this.head);
+
+        this.rig.object3D.position.x +=
+          THREE.MathUtils.clamp(this.head.x, -7, 7) - this.head.x;
+        this.rig.object3D.position.z +=
+          THREE.MathUtils.clamp(this.head.z, -7, 7) - this.head.z;
+
+        this.rig.object3D.updateWorldMatrix(true, true);
+        this.camera.object3D.getWorldPosition(this.head);
 
         if (this.placeAt && now >= this.placeAt) {
           this.placeAt = 0;
           this.placeTarget();
         }
 
+        this.label.object3D.lookAt(this.head);
+
         if (this.resetAt && now >= this.resetAt) {
-          this.health = 100;
+          this.hp = 100;
           this.resetAt = 0;
           this.target.setAttribute('color', '#26C6DA');
-          this.setLabel('HP 100 / 100');
+          this.label.setAttribute('value', 'HP 100 / 100');
         }
 
         if (this.flashUntil && now >= this.flashUntil) {
           this.flashUntil = 0;
-          if (this.health > 0) {
+          if (this.hp > 0) {
             this.target.setAttribute('color', '#26C6DA');
           }
         }
@@ -117,17 +287,18 @@
         this.target.object3D.getWorldPosition(this.center);
 
         this.hands.forEach(hand => {
-          hand.el.object3D.getWorldPosition(hand.current);
+          const local = hand.el.object3D.position;
+          hand.el.object3D.getWorldPosition(hand.world);
 
-          if (!hand.ready || !delta || delta > 100) {
-            hand.previous.copy(hand.current);
+          if (!hand.ready) {
+            hand.previous.copy(local);
             hand.ready = true;
             return;
           }
 
-          const speed =
-            hand.current.distanceTo(hand.previous) / (delta / 1000);
-          const distance = hand.current.distanceTo(this.center);
+          // Local hand speed excludes artificial rig movement.
+          const speed = local.distanceTo(hand.previous) / dt;
+          const distance = hand.world.distanceTo(this.center);
 
           if (distance > 0.29) hand.inside = false;
 
@@ -138,21 +309,23 @@
                 now >= hand.nextHit &&
                 !this.resetAt) {
               hand.nextHit = now + 350;
-              this.health = Math.max(0, this.health - 20);
+              this.hp = Math.max(0, this.hp - 20);
 
-              if (this.health === 0) {
+              if (this.hp === 0) {
                 this.target.setAttribute('color', '#FFD54F');
-                this.setLabel('Complete! Resetting...');
+                this.label.setAttribute('value', 'Complete!');
                 this.resetAt = now + 1500;
               } else {
                 this.target.setAttribute('color', '#FF7043');
-                this.setLabel('HP ' + this.health + ' / 100');
+                this.label.setAttribute(
+                  'value', 'HP ' + this.hp + ' / 100'
+                );
                 this.flashUntil = now + 160;
               }
             }
           }
 
-          hand.previous.copy(hand.current);
+          hand.previous.copy(local);
         });
       }
     });
@@ -160,7 +333,7 @@
 </head>
 
 <body>
-  <a-scene punch-test background="color: #182333">
+  <a-scene training background="color: #182333">
 
     <a-light type="ambient" intensity="1"></a-light>
     <a-light type="directional"
@@ -168,24 +341,59 @@
              intensity="1"></a-light>
 
     <a-plane rotation="-90 0 0"
-             width="16"
-             height="16"
+             width="18" height="18"
              color="#52616B"></a-plane>
 
-    <a-box position="-2 1.5 -6"
+    <!-- Yellow lines mark the virtual walking area. -->
+    <a-box position="0 0.015 -7.3"
+           width="14.6" height="0.03" depth="0.08"
+           color="#FFD54F"></a-box>
+    <a-box position="0 0.015 7.3"
+           width="14.6" height="0.03" depth="0.08"
+           color="#FFD54F"></a-box>
+    <a-box position="-7.3 0.015 0"
+           width="0.08" height="0.03" depth="14.6"
+           color="#FFD54F"></a-box>
+    <a-box position="7.3 0.015 0"
+           width="0.08" height="0.03" depth="14.6"
+           color="#FFD54F"></a-box>
+
+    <!-- Starting marker -->
+    <a-ring position="0 0.02 0"
+            rotation="-90 0 0"
+            radius-inner="0.65"
+            radius-outer="0.72"
+            color="#26C6DA"></a-ring>
+
+    <!-- Visual landmarks: no collision yet. -->
+    <a-box position="-2 1.5 -5"
            width="0.6" height="3" depth="0.6"
            color="#8795A1"></a-box>
-
-    <a-box position="2 1.5 -6"
+    <a-box position="2 1.5 -5"
            width="0.6" height="3" depth="0.6"
            color="#8795A1"></a-box>
-
-    <a-box position="0 3.2 -6"
+    <a-box position="0 3.2 -5"
            width="4.6" height="0.4" depth="0.6"
            color="#8795A1"></a-box>
 
-    <a-text value="DESCENT VR - PUNCH TEST v2\nTrigger: reset target in front of you"
-            position="0 2.3 -4"
+    <a-box position="4 0.5 0"
+           color="#EF8C62"></a-box>
+    <a-box position="-4 0.5 0"
+           color="#9276C5"></a-box>
+
+    <!-- Off-center instructions to reduce overlap. -->
+    <a-plane position="-3 1.7 -3"
+             width="2.6" height="2.4"
+             color="#17202B"></a-plane>
+
+    <a-text id="status"
+            position="-3 1.7 -2.98"
+            align="center"
+            color="#FFFFFF"
+            width="2.3"></a-text>
+
+    <a-text value="DESCENT VR\nMOVEMENT v3"
+            position="0 2.5 -5"
             align="center"
             color="#FFFFFF"
             width="4"></a-text>
@@ -195,22 +403,20 @@
               radius="0.18"
               color="#26C6DA"></a-sphere>
 
-    <a-text id="label"
+    <a-text id="health"
             value="HP 100 / 100"
-            position="0 1.71 -0.6"
+            position="0 1.65 -0.6"
             align="center"
             color="#FFFFFF"
-            width="1.1"></a-text>
+            width="0.8"></a-text>
 
     <a-entity id="rig">
       <a-entity id="view"
                 camera
                 position="0 1.6 0"
                 look-controls></a-entity>
-
       <a-entity id="left"
                 meta-touch-controls="hand: left"></a-entity>
-
       <a-entity id="right"
                 meta-touch-controls="hand: right"></a-entity>
     </a-entity>
