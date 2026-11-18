@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1">
+  <title>Descent VR — First Test</title>
+  <script src="https://aframe.io/releases/1.8.0/aframe.min.js"></script>
+</head>
+
+<body>
+  <a-scene background="color: #182333">
+
+    <!-- Lighting -->
+    <a-light type="ambient" intensity="1"></a-light>
+    <a-light type="directional"
+             position="2 5 3"
+             intensity="1"></a-light>
+
+    <!-- Floor -->
+    <a-plane rotation="-90 0 0"
+             width="16"
+             height="16"
+             color="#52616B"></a-plane>
+
+    <!-- A landmark in front of the starting position -->
+    <a-box position="0 0.5 -3"
+           width="1"
+           height="1"
+           depth="1"
+           color="#26C6DA"></a-box>
+
+    <!-- Two pillars and a beam -->
+    <a-box position="-2 1.5 -6"
+           width="0.6"
+           height="3"
+           depth="0.6"
+           color="#8795A1"></a-box>
+
+    <a-box position="2 1.5 -6"
+           width="0.6"
+           height="3"
+           depth="0.6"
+           color="#8795A1"></a-box>
+
+    <a-box position="0 3.2 -6"
+           width="4.6"
+           height="0.4"
+           depth="0.6"
+           color="#8795A1"></a-box>
+
+    <!-- Welcome sign -->
+    <a-text value="DESCENT VR\nFirst headset test"
+            position="0 2.3 -4"
+            align="center"
+            color="#FFFFFF"
+            width="5"></a-text>
+
+    <!-- Player: no artificial locomotion yet -->
+    <a-entity id="rig" position="0 0 0">
+      <a-entity camera
+                position="0 1.6 0"
+                look-controls></a-entity>
+
+      <a-entity laser-controls="hand: left"
+                raycaster="far: 5"></a-entity>
+
+      <a-entity laser-controls="hand: right"
+                raycaster="far: 5"></a-entity>
+    </a-entity>
+
+  </a-scene>
+</body>
+</html>
