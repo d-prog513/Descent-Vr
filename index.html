@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Descent VR - XR Aim Test v5.1</title>
+<title>Descent VR - Impact Audio v5.2</title>
 <script src="https://aframe.io/releases/1.8.0/aframe.min.js"></script>
 
 <style>
@@ -42,6 +42,15 @@ body.immersive #hud,
 body.immersive #crosshair {
   display: none;
 }
+
+#audio-panel {
+  position: fixed; bottom: 12px; left: 12px; z-index: 20;
+  background: #101a29ef; color: white; border-radius: 8px;
+  padding: 10px; font: 14px Arial, sans-serif;
+}
+#audio-panel button { margin-left: 5px; padding: 7px; cursor: pointer; }
+body.immersive #audio-panel { display: none; }
+
 </style>
 
 <script>
@@ -329,6 +338,11 @@ AFRAME.registerComponent('training-v4', {
     if (this.resetAt) return;
 
     this.hp = Math.max(0, this.hp - amount);
+    const feedback = this.el.components['ability-test'];
+    if (feedback && feedback.hitFeedback) {
+      feedback.hitFeedback(amount === 25 ? 'knife' : 'punch', this.target.object3D.position);
+    }
+
 
     if (this.hp === 0) {
       this.target.setAttribute('color', '#FFD54F');
@@ -872,7 +886,7 @@ AFRAME.registerComponent('training-v4', {
           : 'READY';
 
     const status =
-      'XR AIM TEST v5.1 | ' +
+      'IMPACT AUDIO v5.2 | ' +
       (vr ? 'VR' : 'DESKTOP') + '\n' +
       'Stamina ' +
       Math.ceil(this.stamina) +
@@ -896,7 +910,7 @@ AFRAME.registerComponent('training-v4', {
         'WASD: move | Space: jump | Shift: sprint\n' +
         'Drag mouse: look | Click: short-range punch\n' +
         'R: reset orb | Aim with center +\n' +
-        'F: returning knife | H: hints | XR Aim Test v5.1');
+        'F: returning knife | H: hints | Impact Audio v5.2');
     }
   }
 });
@@ -1399,7 +1413,9 @@ AFRAME.registerComponent('ability-test', {
     this.el.object3D.add(this.aimDot);
 
 
+    this.initFeedback();
     this.right.addEventListener('triggerdown', () => {
+      this.unlockAudio();
       if (this.el.is('vr-mode')) this.throwRequested = true;
     });
     this.right.addEventListener('thumbstickdown', () => {
@@ -1417,6 +1433,247 @@ AFRAME.registerComponent('ability-test', {
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) this.cancelKnife();
     });
+  },
+
+  initFeedback: function () {
+    this.soundVolume = 0.30;
+    this.muted = false;
+    try {
+      const saved = JSON.parse(localStorage.getItem('descent-audio-v1') || 'null');
+      if (saved) {
+        if (typeof saved.volume === 'number' && Number.isFinite(saved.volume))
+          this.soundVolume = THREE.MathUtils.clamp(saved.volume, 0, 1);
+        this.muted = saved.muted === true;
+      }
+    } catch (error) {}
+    this.audioContext = null;
+    this.masterGain = null;
+    this.effectCursor = 0;
+    this.effects = [];
+    for (let index = 0; index < 8; index++) {
+      const vertices = [];
+      for (let ray = 0; ray < 8; ray++) {
+        const angle = ray * Math.PI / 4;
+        const height = ray % 2 ? 0.5 : -0.5;
+        vertices.push(Math.cos(angle) * 0.025, height * 0.025, Math.sin(angle) * 0.025,
+          Math.cos(angle) * 0.11, height * 0.11, Math.sin(angle) * 0.11);
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+      const mesh = new THREE.LineSegments(geometry,
+        new THREE.LineBasicMaterial({color: 0xffd166, transparent: true, opacity: 1}));
+      mesh.visible = false;
+      this.el.object3D.add(mesh);
+      this.effects.push({mesh: mesh, life: 0, duration: 0.22});
+    }
+    // Static scenery blocks projectiles only. Player collisions remain unchanged.
+    this.decorativeSolids = [
+      {x: -2, z: -5, width: 0.6, depth: 0.6, bottom: 0, top: 3},
+      {x: 2, z: -5, width: 0.6, depth: 0.6, bottom: 0, top: 3},
+      {x: 0, z: -5, width: 4.6, depth: 0.6, bottom: 3, top: 3.4},
+      {x: 4, z: 0, width: 1, depth: 1, bottom: 0, top: 1},
+      {x: -4, z: 0, width: 1, depth: 1, bottom: 0, top: 1}
+    ];
+    this.soundButtons = [];
+    this.soundPanel = document.createElement('a-entity');
+    const backing = document.createElement('a-plane');
+    backing.setAttribute('position', '-3 1.32 -1.66');
+    backing.setAttribute('width', 2.05);
+    backing.setAttribute('height', 0.7);
+    backing.setAttribute('color', '#142232');
+    this.soundPanel.appendChild(backing);
+    this.soundLabel = document.createElement('a-text');
+    this.soundLabel.setAttribute('position', '-3 1.51 -1.62');
+    this.soundLabel.setAttribute('align', 'center');
+    this.soundLabel.setAttribute('width', 1.8);
+    this.soundPanel.appendChild(this.soundLabel);
+    ['mute', 'down', 'up', 'test'].forEach((action, index) => {
+      const x = -3.69 + index * 0.46;
+      const button = document.createElement('a-box');
+      button.setAttribute('position', {x: x, y: 1.20, z: -1.60});
+      button.setAttribute('width', 0.42);
+      button.setAttribute('height', 0.22);
+      button.setAttribute('depth', 0.05);
+      button.setAttribute('color', '#35516B');
+      this.soundPanel.appendChild(button);
+      const label = document.createElement('a-text');
+      label.setAttribute('position', {x: x, y: 1.20, z: -1.568});
+      label.setAttribute('align', 'center');
+      label.setAttribute('width', 0.7);
+      label.setAttribute('value', ['MUTE', 'VOL -', 'VOL +', 'TEST'][index]);
+      this.soundPanel.appendChild(label);
+      this.soundButtons.push({action: action,
+        box: new THREE.Box3(new THREE.Vector3(x - 0.21, 1.09, -1.635),
+          new THREE.Vector3(x + 0.21, 1.31, -1.565))});
+    });
+    this.el.appendChild(this.soundPanel);
+    const panel = document.createElement('div');
+    panel.id = 'audio-panel';
+    panel.innerHTML = '<span id="audio-label"></span> <button type="button" data-audio="mute">Mute</button> <button type="button" data-audio="down">Vol -</button> <button type="button" data-audio="up">Vol +</button> <button type="button" data-audio="test">Test sound</button>';
+    document.body.appendChild(panel);
+    panel.querySelectorAll('button').forEach(button => {
+      button.addEventListener('click', event => {
+        event.stopPropagation();
+        this.soundAction(button.dataset.audio);
+      });
+    });
+    panel.addEventListener('keydown', event => event.stopPropagation());
+    window.addEventListener('pointerdown', () => this.unlockAudio(), {capture: true});
+    window.addEventListener('keydown', event => {
+      if (event.target.closest && event.target.closest('input,textarea,[contenteditable],button')) return;
+      this.unlockAudio();
+      if (event.repeat || this.el.is('vr-mode')) return;
+      if (event.code === 'KeyM') this.soundAction('mute');
+      if (event.code === 'BracketLeft') this.soundAction('down');
+      if (event.code === 'BracketRight') this.soundAction('up');
+    });
+    this.el.addEventListener('enter-vr', () => this.unlockAudio());
+    this.updateAudioSettings();
+  },
+
+  unlockAudio: function () {
+    try {
+      if (!this.audioContext || this.audioContext.state === 'closed') {
+        const Context = window.AudioContext || window.webkitAudioContext;
+        if (!Context) return Promise.resolve(false);
+        this.audioContext = new Context();
+        this.masterGain = this.audioContext.createGain();
+        const limiter = this.audioContext.createDynamicsCompressor();
+        limiter.threshold.value = -12;
+        limiter.knee.value = 16;
+        limiter.ratio.value = 6;
+        limiter.attack.value = 0.003;
+        limiter.release.value = 0.10;
+        this.masterGain.connect(limiter);
+        limiter.connect(this.audioContext.destination);
+        this.updateAudioSettings();
+      }
+      if (this.audioContext.state === 'suspended') {
+        return this.audioContext.resume().then(() => this.audioContext.state === 'running').catch(() => false);
+      }
+      return Promise.resolve(this.audioContext.state === 'running');
+    } catch (error) { return Promise.resolve(false); }
+  },
+
+  updateAudioSettings: function () {
+    if (this.masterGain && this.audioContext) {
+      this.masterGain.gain.setTargetAtTime(this.muted ? 0 : this.soundVolume,
+        this.audioContext.currentTime, 0.015);
+    }
+    const text = this.muted ? 'SFX MUTED' : 'SFX ' + Math.round(this.soundVolume * 100) + '%';
+    if (this.soundLabel) this.soundLabel.setAttribute('value', 'SOUND CONTROLS | ' + text + '\nAim at button + right trigger (within 3m)');
+    const label = document.querySelector('#audio-label');
+    if (label) label.textContent = text;
+    try { localStorage.setItem('descent-audio-v1', JSON.stringify({volume: this.soundVolume, muted: this.muted})); }
+    catch (error) {}
+  },
+
+  soundAction: function (action) {
+    const ready = this.unlockAudio();
+    if (action === 'mute') this.muted = !this.muted;
+    if (action === 'down') this.soundVolume = Math.max(0, Math.round((this.soundVolume - 0.1) * 10) / 10);
+    if (action === 'up') this.soundVolume = Math.min(1, Math.round((this.soundVolume + 0.1) * 10) / 10);
+    this.updateAudioSettings();
+    this.lastHit = this.muted ? 'SFX MUTED' : 'SFX ' + Math.round(this.soundVolume * 100) + '%';
+    this.feedbackUntil = this.clock + 1.5;
+    if (action === 'test') ready.then(ok => {
+      if (ok) this.playEffect('wall');
+      else {
+        this.lastHit = 'Audio not unlocked - click Test sound in browser';
+        this.feedbackUntil = this.clock + 3;
+      }
+    });
+  },
+
+  playEffect: function (kind) {
+    const ctx = this.audioContext;
+    if (!ctx || ctx.state !== 'running' || this.muted || this.soundVolume <= 0) return;
+    const t = ctx.currentTime;
+    const tone = (frequency, endFrequency, duration, volume, type) => {
+      const oscillator = ctx.createOscillator();
+      const envelope = ctx.createGain();
+      oscillator.type = type || 'sine';
+      oscillator.frequency.setValueAtTime(frequency, t);
+      oscillator.frequency.exponentialRampToValueAtTime(endFrequency, t + duration);
+      envelope.gain.setValueAtTime(0.0001, t);
+      envelope.gain.exponentialRampToValueAtTime(volume, t + 0.005);
+      envelope.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+      oscillator.connect(envelope);
+      envelope.connect(this.masterGain);
+      oscillator.onended = () => { oscillator.disconnect(); envelope.disconnect(); };
+      oscillator.start(t);
+      oscillator.stop(t + duration + 0.02);
+    };
+    try {
+      if (kind === 'wall') {
+        tone(920, 750, 0.21, 0.14, 'sine');
+        tone(1531, 1300, 0.15, 0.07, 'sine');
+        tone(2377, 1900, 0.09, 0.035, 'triangle');
+      } else if (kind === 'punch') {
+        tone(150, 55, 0.12, 0.22, 'triangle');
+        tone(80, 45, 0.09, 0.10, 'sine');
+      } else if (kind === 'knife') {
+        tone(640, 1040, 0.085, 0.14, 'triangle');
+        tone(1280, 820, 0.12, 0.055, 'sine');
+      } else if (kind === 'catch') {
+        tone(440, 660, 0.075, 0.085, 'sine');
+      }
+    } catch (error) {}
+  },
+
+  hitFeedback: function (kind, position) {
+    this.playEffect(kind);
+    if (!this.effects || !this.effects.length || !position) return;
+    const effect = this.effects[this.effectCursor++ % this.effects.length];
+    effect.duration = kind === 'catch' ? 0.13 : 0.22;
+    effect.life = effect.duration;
+    effect.mesh.position.copy(position);
+    effect.mesh.scale.setScalar(kind === 'catch' ? 0.6 : 1);
+    effect.mesh.material.color.setHex(kind === 'wall' ? 0xffc04d : kind === 'catch' ? 0x88ffd0 : 0x55ddff);
+    effect.mesh.material.opacity = 1;
+    effect.mesh.visible = true;
+  },
+
+  updateFeedback: function (dt) {
+    this.effects.forEach(effect => {
+      if (effect.life <= 0) return;
+      effect.life = Math.max(0, effect.life - dt);
+      const progress = 1 - effect.life / effect.duration;
+      effect.mesh.visible = effect.life > 0;
+      effect.mesh.material.opacity = 1 - progress;
+      effect.mesh.scale.setScalar((effect.duration < 0.2 ? 0.6 : 1) + progress * 1.7);
+    });
+  },
+
+  blockingDistance: function (start, direction, length, training) {
+    let nearest = Infinity;
+    const check = solid => {
+      this.box.min.set(solid.x - solid.width / 2, solid.bottom || 0, solid.z - solid.depth / 2);
+      this.box.max.set(solid.x + solid.width / 2, solid.top, solid.z + solid.depth / 2);
+      const distance = this.box.containsPoint(start) ? 0 : this.segmentDistance(start, direction, length, this.box);
+      nearest = Math.min(nearest, distance);
+    };
+    (training.practicePlatforms || []).forEach(check);
+    this.decorativeSolids.forEach(check);
+    if (direction.y < -0.00001) {
+      const floor = (0.01 - start.y) / direction.y;
+      if (floor >= 0 && floor <= length) nearest = Math.min(nearest, floor);
+    }
+    return nearest;
+  },
+
+  findSoundButton: function (origin, direction, training) {
+    if (!training) return null;
+    let best = null;
+    let nearest = this.blockingDistance(origin, direction, 3, training);
+    this.soundButtons.forEach(button => {
+      const distance = this.segmentDistance(origin, direction, 3, button.box);
+      if (Number.isFinite(distance) && distance < nearest) {
+        nearest = distance;
+        best = {action: button.action, distance: distance};
+      }
+    });
+    return best;
   },
 
   readAim: function (origin, direction) {
@@ -1474,12 +1731,12 @@ AFRAME.registerComponent('ability-test', {
       distance = Math.min(distance,
         this.segmentSphereDistance(this.aimOrigin, this.aimDirection, 9, this.orbSphere));
     }
-    (training.practicePlatforms || []).forEach(platform => {
-      this.box.min.set(platform.x - platform.width / 2, 0, platform.z - platform.depth / 2);
-      this.box.max.set(platform.x + platform.width / 2, platform.top, platform.z + platform.depth / 2);
-      distance = Math.min(distance, this.box.containsPoint(this.aimOrigin) ? 0 :
-        this.segmentDistance(this.aimOrigin, this.aimDirection, 9, this.box));
-    });
+    distance = Math.min(distance, this.blockingDistance(this.aimOrigin, this.aimDirection, 9, training));
+    const menu = this.findSoundButton(this.aimOrigin, this.aimDirection, training);
+    if (menu) distance = Math.min(distance, menu.distance);
+    const guideColor = menu ? 0xffd166 : 0x55ddff;
+    this.aimLine.material.color.setHex(guideColor);
+    this.aimDot.material.color.setHex(guideColor);
     this.aimEnd.copy(this.aimOrigin).addScaledVector(this.aimDirection, distance);
     const attribute = this.aimLine.geometry.attributes.position;
     attribute.setXYZ(0, this.aimOrigin.x, this.aimOrigin.y, this.aimOrigin.z);
@@ -1514,7 +1771,7 @@ AFRAME.registerComponent('ability-test', {
   },
 
   throwKnife: function () {
-    if (document.hidden || this.state !== 'READY' || this.cooldown > 0) return;
+    if (document.hidden) return;
     const vr = this.el.is('vr-mode');
     if (vr) {
       const session = this.el.renderer.xr.getSession();
@@ -1527,6 +1784,10 @@ AFRAME.registerComponent('ability-test', {
       this.feedbackUntil = this.clock + 1.5;
       return;
     }
+    const training = this.el.components['training-v4'];
+    const menu = this.findSoundButton(this.origin, this.direction, training);
+    if (menu) { this.soundAction(menu.action); return; }
+    if (this.state !== 'READY' || this.cooldown > 0) return;
     this.knifeRoot.position.copy(this.origin);
     this.velocity.copy(this.direction).multiplyScalar(10);
     this.knifeRoot.quaternion.setFromUnitVectors(this.bladeForward, this.direction);
@@ -1541,6 +1802,8 @@ AFRAME.registerComponent('ability-test', {
   damageDummy: function (amount, source) {
     if (this.hp <= 0) return;
     this.hp = Math.max(0, this.hp - amount);
+    this.hitFeedback(source === 'KNIFE' ? 'knife' : 'punch',
+      source === 'KNIFE' ? this.knifeRoot.position : this.next);
     this.lastHit = source + ' HIT -' + amount;
     this.feedbackUntil = this.clock + 1.5;
     this.flashUntil = this.clock + 0.18;
@@ -1578,15 +1841,7 @@ AFRAME.registerComponent('ability-test', {
         const orbDistance = this.segmentSphereDistance(position, this.direction, length, this.orbSphere);
         if (orbDistance < targetDistance) { targetDistance = orbDistance; hitKind = 'orb'; }
       }
-      let wallDistance = Infinity;
-      (training.practicePlatforms || []).forEach(platform => {
-        this.box.min.set(platform.x - platform.width / 2, 0, platform.z - platform.depth / 2);
-        this.box.max.set(platform.x + platform.width / 2, platform.top, platform.z + platform.depth / 2);
-        // If a throw starts inside a solid, recall it rather than shoot through.
-        const distance = this.box.containsPoint(position) ? 0 :
-          this.segmentDistance(position, this.direction, length, this.box);
-        wallDistance = Math.min(wallDistance, distance);
-      });
+      const wallDistance = this.blockingDistance(position, this.direction, length, training);
       if (Number.isFinite(targetDistance) && targetDistance < wallDistance) {
         position.addScaledVector(this.direction, targetDistance);
         this.hitThisThrow = true;
@@ -1601,6 +1856,7 @@ AFRAME.registerComponent('ability-test', {
       } else if (Number.isFinite(wallDistance)) {
         position.addScaledVector(this.direction, Math.max(0, wallDistance - 0.025));
         this.state = 'RETURNING';
+        this.hitFeedback('wall', position);
         this.lastHit = 'BLOCKED - knife returning';
         this.feedbackUntil = this.clock + 1;
       } else {
@@ -1618,6 +1874,7 @@ AFRAME.registerComponent('ability-test', {
         this.knifeRoot.visible = false;
         this.state = 'READY';
         this.cooldown = 0.45;
+        this.hitFeedback('catch', this.origin);
       } else {
         this.direction.copy(this.deltaVector).normalize();
         this.knifeRoot.position.addScaledVector(this.direction, 14 * dt);
@@ -1637,6 +1894,7 @@ AFRAME.registerComponent('ability-test', {
     const dt = delta / 1000;
     this.clock += dt;
     this.cooldown = Math.max(0, this.cooldown - dt);
+    this.updateFeedback(dt);
     const aimValid = this.readAim(this.aimOrigin, this.aimDirection);
     this.updateAimGuide(training, aimValid);
     if (this.throwRequested) {
@@ -1700,7 +1958,8 @@ AFRAME.registerComponent('ability-test', {
     const holding = climbing && climbing.hands.some(hand => hand.grabbing);
     const state = holding ? 'HOLD | Stamina ' + Math.ceil(training.stamina) + '/100 (no drain)' : '';
     const knifeState = this.state === 'READY' && this.cooldown > 0 ? 'RECOVERING' : this.state;
-    let text = 'XR AIM TEST v5.1 | KNIFE ' + knifeState;
+    let text = 'IMPACT AUDIO v5.2 | KNIFE ' + knifeState;
+    text += ' | SFX ' + (this.muted ? 'MUTED' : Math.round(this.soundVolume * 100) + '%');
     if (state) text += '\n' + state;
     if (this.clock < this.feedbackUntil) text += '\n' + this.lastHit;
     else if (this.hints) text += this.el.is('vr-mode') ?
@@ -1717,7 +1976,7 @@ AFRAME.registerComponent('ability-test', {
 
 <body>
 
-<div id="hud">Loading XR Aim Test v5.1...</div>
+<div id="hud">Loading Impact Audio v5.2...</div>
 <div id="crosshair">+</div>
 
 <a-scene
@@ -1786,7 +2045,7 @@ AFRAME.registerComponent('ability-test', {
     color="#26C6DA">
   </a-ring>
 
-  <!-- Visual landmarks: no collision yet -->
+  <!-- Visual landmarks: projectile collision only; no new player collision -->
 
   <a-box
     position="-2 1.5 -5"
@@ -1844,7 +2103,7 @@ AFRAME.registerComponent('ability-test', {
     align="center"
     width="4"
     color="white"
-    value="DESCENT VR\nXR AIM TEST v5.1">
+    value="DESCENT VR\nIMPACT AUDIO v5.2">
   </a-text>
 
   <!-- Practice target -->
