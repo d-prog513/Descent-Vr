@@ -394,7 +394,12 @@ AFRAME.registerComponent('training-v4', {
         return;
       }
     }
+    const climbing = this.el.components['ledge-climb'];
 
+    if (climbing && climbing.step(this)) {
+      return;
+    }
+    
     const dt = delta / 1000;
     const now = performance.now();
     const vr = this.inVR();
@@ -842,6 +847,246 @@ AFRAME.registerComponent('training-v4', {
   }
 });
 </script>
+  <script>
+AFRAME.registerComponent('ledge-climb', {
+  init: function () {
+    this.rig = document.querySelector('#rig');
+    this.view = document.querySelector('#view');
+
+    this.head = new THREE.Vector3();
+    this.correction = new THREE.Vector3();
+    this.nearest = new THREE.Vector3();
+
+    this.ledge = {
+      x: 3,
+      z: -3,
+      width: 2,
+      depth: 1.5,
+      top: 1.45,
+      color: '#FFAA55'
+    };
+
+    this.hands = ['#left', '#right'].map(selector => ({
+      el: document.querySelector(selector),
+      held: false,
+      grabbing: false,
+      anchor: new THREE.Vector3(),
+      world: new THREE.Vector3()
+    }));
+
+    this.hands.forEach(hand => {
+      hand.el.addEventListener('gripdown', () => {
+        if (this.el.is('vr-mode')) {
+          hand.held = true;
+        }
+      });
+
+      hand.el.addEventListener('gripup', () => {
+        hand.held = false;
+      });
+
+      hand.el.addEventListener('controllerdisconnected', () => {
+        this.releaseAll();
+      });
+    });
+
+    this.el.addEventListener('exit-vr', () => {
+      this.releaseAll();
+    });
+
+    this.el.addEventListener('enter-vr', () => {
+      this.releaseAll();
+    });
+
+    window.addEventListener('blur', () => {
+      this.releaseAll();
+    });
+
+    document.addEventListener('visibilitychange', () => {
+      this.releaseAll();
+    });
+
+    this.wasClimbing = false;
+    this.cooldownUntil = 0;
+  },
+
+  releaseAll: function () {
+    this.hands.forEach(hand => {
+      hand.held = false;
+      hand.grabbing = false;
+    });
+
+    this.wasClimbing = false;
+
+    if (this.mesh) {
+      this.mesh.setAttribute('color', this.ledge.color);
+    }
+  },
+
+  step: function (training) {
+    if (!training.practicePlatforms) return false;
+
+    // Add this ledge to the existing collision list once.
+    if (!this.mesh) {
+      training.practicePlatforms.push(this.ledge);
+
+      this.mesh = document.createElement('a-box');
+
+      this.mesh.setAttribute('position', {
+        x: this.ledge.x,
+        y: this.ledge.top / 2,
+        z: this.ledge.z
+      });
+
+      this.mesh.setAttribute('width', this.ledge.width);
+      this.mesh.setAttribute('height', this.ledge.top);
+      this.mesh.setAttribute('depth', this.ledge.depth);
+      this.mesh.setAttribute('color', this.ledge.color);
+
+      this.el.appendChild(this.mesh);
+
+      const sign = document.createElement('a-text');
+
+      sign.setAttribute('position', {
+        x: this.ledge.x,
+        y: this.ledge.top + 0.8,
+        z: this.ledge.z
+      });
+
+      sign.setAttribute('value',
+        'CLIMB TEST\nGrip near the top\nPull down, then release'
+      );
+
+      sign.setAttribute('align', 'center');
+      sign.setAttribute('width', '2.5');
+      sign.setAttribute('color', '#FFFFFF');
+
+      this.el.appendChild(sign);
+    }
+
+    if (!this.el.is('vr-mode')) {
+      this.releaseAll();
+      return false;
+    }
+
+    const now = performance.now();
+    const ledge = this.ledge;
+
+    this.rig.object3D.updateWorldMatrix(true, true);
+
+    this.hands.forEach(hand => {
+      hand.el.object3D.getWorldPosition(hand.world);
+
+      if (!hand.held) {
+        hand.grabbing = false;
+        return;
+      }
+
+      if (hand.grabbing || now < this.cooldownUntil) {
+        return;
+      }
+
+      // Find the closest point on the ledge's top.
+      this.nearest.set(
+        THREE.MathUtils.clamp(
+          hand.world.x,
+          ledge.x - ledge.width / 2,
+          ledge.x + ledge.width / 2
+        ),
+        ledge.top,
+        THREE.MathUtils.clamp(
+          hand.world.z,
+          ledge.z - ledge.depth / 2,
+          ledge.z + ledge.depth / 2
+        )
+      );
+
+      if (hand.world.distanceTo(this.nearest) < 0.22) {
+        hand.grabbing = true;
+
+        // Anchor at the hand's current position to avoid a snap.
+        hand.anchor.copy(hand.world);
+      }
+    });
+
+    const activeHands = this.hands.filter(hand => hand.grabbing);
+
+    if (activeHands.length > 0) {
+      this.correction.set(0, 0, 0);
+
+      activeHands.forEach(hand => {
+        this.correction.x += hand.anchor.x - hand.world.x;
+        this.correction.y += hand.anchor.y - hand.world.y;
+        this.correction.z += hand.anchor.z - hand.world.z;
+      });
+
+      this.correction.divideScalar(activeHands.length);
+
+      // Limit correction from a single tracking update.
+      this.correction.clampLength(0, 0.12);
+
+      this.rig.object3D.position.add(this.correction);
+
+      training.velocityY = 0;
+      training.grounded = false;
+
+      training.hands.forEach(hand => {
+        hand.ready = false;
+      });
+
+      this.wasClimbing = true;
+      this.mesh.setAttribute('color', '#FFD54F');
+
+      // Pause ordinary locomotion and gravity while holding.
+      return true;
+    }
+
+    if (this.wasClimbing) {
+      this.wasClimbing = false;
+      this.cooldownUntil = now + 400;
+
+      this.rig.object3D.updateWorldMatrix(true, true);
+      this.view.object3D.getWorldPosition(this.head);
+
+      const highEnough = this.head.y > ledge.top + 0.65;
+
+      const nearLedge =
+        Math.abs(this.head.x - ledge.x) <
+          ledge.width / 2 + 0.65 &&
+        Math.abs(this.head.z - ledge.z) <
+          ledge.depth / 2 + 0.65;
+
+      if (highEnough && nearLedge) {
+        const finishX = THREE.MathUtils.clamp(
+          this.head.x,
+          ledge.x - ledge.width / 2 + 0.3,
+          ledge.x + ledge.width / 2 - 0.3
+        );
+
+        const finishZ = THREE.MathUtils.clamp(
+          this.head.z,
+          ledge.z - ledge.depth / 2 + 0.3,
+          ledge.z + ledge.depth / 2 - 0.3
+        );
+
+        this.rig.object3D.position.x += finishX - this.head.x;
+        this.rig.object3D.position.z += finishZ - this.head.z;
+        this.rig.object3D.position.y = ledge.top;
+
+        training.velocityY = 0;
+        training.grounded = true;
+      } else {
+        training.velocityY = 0;
+        training.grounded = false;
+      }
+
+      this.mesh.setAttribute('color', ledge.color);
+    }
+
+    return false;
+  }
+});
+</script>
 </head>
 
 <body>
@@ -851,6 +1096,7 @@ AFRAME.registerComponent('training-v4', {
 
 <a-scene
   training-v4
+  ledge-climb
   background="color: #182333">
 
   <a-light
