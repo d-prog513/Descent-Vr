@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Descent VR - Wrist Lab v6.2.2</title>
+<title>Descent VR - Wrist Lab v6.2.3</title>
 <script src="https://aframe.io/releases/1.8.0/aframe.min.js"></script>
 
 <style>
@@ -53,8 +53,8 @@ body.immersive #audio-panel { display: none; }
 
 
 #mobile-controls { display: none; }
-@media (any-pointer: coarse) {
-  body:not(.immersive) #mobile-controls { display: block; }
+@media (min-width: 0px) {
+  body.input-touch:not(.immersive) #mobile-controls { display: block; }
   #mobile-controls { position: fixed; inset: 0; z-index: 15; pointer-events: none; user-select: none; -webkit-user-select: none; }
   #mobile-controls button, #touch-move, #touch-look { pointer-events: auto; touch-action: none; }
   #touch-move { position: absolute; bottom: max(24px, env(safe-area-inset-bottom)); left: 14px; width: min(29vw, 122px); height: min(29vw, 122px); border: 2px solid #72d9ff88; border-radius: 50%; background: #12253899; display: grid; place-items: center; color: #a8c9d6; font-size: 11px; }
@@ -66,11 +66,11 @@ body.immersive #audio-panel { display: none; }
   #touch-actions button:active { background: #397e9c; }
   #audio-panel { left: 8px; right: 8px; top: 6px; bottom: auto; padding: 5px; font-size: 11px; }
   #audio-panel button { padding: 5px; margin-left: 3px; font-size: 10px; touch-action: manipulation; }
-  #hud { top: 48px; left: 8px; right: 8px; padding: 5px; max-width: none; max-height: 46px; overflow: hidden; font-size: 10px; }
+  body.input-touch #hud { top: 48px; left: 8px; right: 8px; padding: 5px; max-width: none; max-height: 46px; overflow: hidden; font-size: 10px; }
   @media (max-height: 450px) {
     #touch-look { top: 76px; bottom: 166px; }
     #touch-actions button { min-height: 32px; }
-    #hud { max-height: 22px; }
+    body.input-touch #hud { max-height: 22px; }
   }
 }
 
@@ -89,12 +89,17 @@ body.game-paused #mobile-controls { display:none !important; }
 #touch-actions .advanced-action { display:none; }
 #mobile-controls.advanced #touch-actions .advanced-action { display:block; }
 #touch-actions button.active { background:#337c49; border-color:#9de6a9; }
-@media (any-pointer:coarse) {
- #hud { top:8px; right:90px; max-height:60px; }
+@media (min-width:0px) {
+ body.input-touch #hud { top:8px; right:90px; max-height:60px; }
  #touch-look { top:88px; bottom:150px; }
  #mobile-controls.advanced #touch-look { bottom:195px; }
 }
 
+
+#input-layout-settings { margin:14px 0 0; border:1px solid #6597b4; border-radius:7px; padding:10px; }
+#input-layout-settings button { margin:4px 6px 4px 0; min-height:38px; padding:6px 12px; border:1px solid #6c9fbd; border-radius:6px; background:#294c69; color:white; touch-action:manipulation; }
+#input-layout-settings button[aria-pressed="true"] { background:#367449; border-color:#a4ebaa; }
+#input-layout-settings p { margin:6px 0 0; font-size:12px; line-height:1.4; }
 </style>
 
 <script>
@@ -940,7 +945,7 @@ AFRAME.registerComponent('training-v4', {
           : 'READY';
 
     const status =
-      'WRIST LAB v6.2.2 | ' +
+      'WRIST LAB v6.2.3 | ' +
       (vr ? 'VR' : 'DESKTOP') + '\n' +
       'Stamina ' +
       Math.ceil(this.stamina) +
@@ -2023,7 +2028,7 @@ AFRAME.registerComponent('ability-test', {
     const state = holding ? 'HOLD | Stamina ' + Math.ceil(training.stamina) + '/100 (grip costs 0)' : '';
     const knifeState = this.state === 'READY' && this.cooldown > 0 ? 'RECOVERING' : this.state;
     const cutter = this.el.components['plasma-cutter'];
-    let text = 'WRIST LAB v6.2.2 | ' + (cutter && cutter.active ?
+    let text = 'WRIST LAB v6.2.3 | ' + (cutter && cutter.active ?
       'CUTTER ' + cutter.state + (cutter.ignited ? ' ON' : ' OFF') +
       (cutter.guiding ? ' | TETHER -2/s' : '') +
       (cutter.state !== 'HELD' ? ' | ' + cutter.root.position.distanceTo(cutter.origin).toFixed(1) + 'm' : '') : 'KNIFE ' + knifeState);
@@ -3202,11 +3207,115 @@ AFRAME.registerComponent('pause-menu', {
 });
 </script>
 
+
+<script>
+AFRAME.registerComponent('input-layout', {
+  init: function () {
+    this.mode = 'auto';
+    this.effective = null;
+    this.keyboardUsed = false;
+    this.lastTouchAt = -Infinity;
+    this.fine = window.matchMedia('(any-pointer: fine)');
+    this.coarse = window.matchMedia('(any-pointer: coarse)');
+    try {
+      const saved = localStorage.getItem('descent-input-layout-v1');
+      if (['auto','keyboard','touch'].includes(saved)) this.mode = saved;
+    } catch (error) {}
+    this.onKeyboard = event => {
+      if (event.target.closest && event.target.closest('input,textarea,select,[contenteditable]')) return;
+      if (event.ctrlKey || event.altKey || event.metaKey) return;
+      this.keyboardUsed = true; this.apply();
+    };
+    this.onPointer = event => {
+      if (event.pointerType === 'touch') {
+        this.lastTouchAt = performance.now();
+        if (!this.fine.matches) this.keyboardUsed = false;
+      } else if (event.pointerType === 'mouse' && performance.now() - this.lastTouchAt > 1000) {
+        this.keyboardUsed = true;
+      }
+      this.apply();
+    };
+    this.onMedia = () => this.apply();
+    this.onLoaded = () => this.attachSettings();
+    window.addEventListener('keydown',this.onKeyboard,true);
+    window.addEventListener('pointerdown',this.onPointer,true);
+    [this.fine,this.coarse].forEach(query => { if (query.addEventListener) query.addEventListener('change',this.onMedia); });
+    this.el.addEventListener('loaded',this.onLoaded);
+    this.apply(); this.attachSettings();
+  },
+
+  resolve: function () {
+    if (this.mode !== 'auto') return this.mode;
+    // A touchscreen alone does not make a keyboard/trackpad device a phone.
+    return this.keyboardUsed || this.fine.matches || !this.coarse.matches ? 'keyboard' : 'touch';
+  },
+
+  setMode: function (mode) {
+    if (!['auto','keyboard','touch'].includes(mode)) return;
+    this.mode = mode;
+    try { localStorage.setItem('descent-input-layout-v1',mode); } catch (error) {}
+    this.apply();
+  },
+
+  apply: function () {
+    const next = this.resolve();
+    if (next !== this.effective) {
+      const cutter = this.el.components['plasma-cutter'];
+      // Switching layouts must not turn a held input into a gesture launch.
+      if (cutter) { cutter.clearTrigger(); cutter.lastTapAt = -100; if (cutter.state === 'CONTROLLED') cutter.hover(false); }
+      const touch = this.el.components['touch-controls'];
+      if (touch) touch.clear();
+      const training = this.el.components['training-v4'];
+      if (training) training.clearInput();
+      const fx = this.el.components['ability-test'];
+      if (fx) fx.throwRequested = false;
+      this.effective = next;
+    }
+    document.body.classList.toggle('input-touch',next === 'touch');
+    this.updateSettings();
+  },
+
+  attachSettings: function () {
+    if (this.settings) return;
+    const section = document.querySelector('#pause-overlay section');
+    if (!section) return;
+    this.settings = document.createElement('fieldset');
+    this.settings.id = 'input-layout-settings';
+    const legend = document.createElement('legend'); legend.textContent = 'Control layout'; this.settings.appendChild(legend);
+    this.options = [];
+    ['auto','keyboard','touch'].forEach(mode => {
+      const button = document.createElement('button'); button.type = 'button';
+      button.textContent = mode[0].toUpperCase() + mode.slice(1);
+      button.addEventListener('click',() => this.setMode(mode));
+      this.settings.appendChild(button); this.options.push({mode:mode,button:button});
+    });
+    this.note = document.createElement('p'); this.settings.appendChild(this.note); section.appendChild(this.settings);
+    this.updateSettings();
+  },
+
+  updateSettings: function () {
+    if (!this.settings) return;
+    this.options.forEach(option => option.button.setAttribute('aria-pressed',String(option.mode === this.mode)));
+    this.note.textContent = (this.mode === 'auto' ? 'Auto selected: ' : 'Selected: ') +
+      (this.effective === 'touch' ? 'Touch' : 'Keyboard') + '. Keyboard hides the phone controls; Quest controls are unchanged.';
+  },
+
+  remove: function () {
+    window.removeEventListener('keydown',this.onKeyboard,true);
+    window.removeEventListener('pointerdown',this.onPointer,true);
+    [this.fine,this.coarse].forEach(query => { if (query.removeEventListener) query.removeEventListener('change',this.onMedia); });
+    this.el.removeEventListener('loaded',this.onLoaded);
+    if (this.settings) this.settings.remove();
+    document.body.classList.remove('input-touch');
+  }
+});
+</script>
+
 </head>
 
 <body>
 
-<div id="hud">Loading Wrist Lab v6.2.2...</div>
+<div id="hud">Loading Wrist Lab v6.2.3...</div>
 <div id="crosshair">+</div>
 
 <a-scene
@@ -3216,6 +3325,7 @@ AFRAME.registerComponent('pause-menu', {
   plasma-cutter
   touch-controls
   pause-menu
+  input-layout
   background="color: #182333">
 
   <a-light
@@ -3323,7 +3433,7 @@ AFRAME.registerComponent('pause-menu', {
     align="center"
     width="4"
     color="white"
-    value="DESCENT VR\nWRIST LAB v6.2.2">
+    value="DESCENT VR\nWRIST LAB v6.2.3">
   </a-text>
 
   <!-- Practice target -->
