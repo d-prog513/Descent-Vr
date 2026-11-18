@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Descent VR - Wrist Lab v6.2.3</title>
+<title>Descent VR - Wrist Lab v6.2.4</title>
 <script src="https://aframe.io/releases/1.8.0/aframe.min.js"></script>
 
 <style>
@@ -52,28 +52,38 @@ body.immersive #crosshair {
 body.immersive #audio-panel { display: none; }
 
 
-#mobile-controls { display: none; }
-@media (min-width: 0px) {
-  body.input-touch:not(.immersive) #mobile-controls { display: block; }
-  #mobile-controls { position: fixed; inset: 0; z-index: 15; pointer-events: none; user-select: none; -webkit-user-select: none; }
-  #mobile-controls button, #touch-move, #touch-look { pointer-events: auto; touch-action: none; }
-  #touch-move { position: absolute; bottom: max(24px, env(safe-area-inset-bottom)); left: 14px; width: min(29vw, 122px); height: min(29vw, 122px); border: 2px solid #72d9ff88; border-radius: 50%; background: #12253899; display: grid; place-items: center; color: #a8c9d6; font-size: 11px; }
-  #touch-move i { position: absolute; width: 36px; height: 36px; border-radius: 50%; background: #55ddff88; }
-  #touch-look { position: absolute; top: 104px; bottom: 185px; right: 10px; width: 53vw; border: 1px dashed #9adfff44; border-radius: 15px; }
-  #touch-look span { display: block; padding: 8px; text-align: center; color: #c9e9ff88; font: 10px Arial; }
-  #touch-actions { position: absolute; right: 8px; bottom: max(10px, env(safe-area-inset-bottom)); display: grid; grid-template-columns: repeat(4, min(13vw, 78px)); gap: 4px; pointer-events: none; }
-  #touch-actions button { min-height: 36px; border: 1px solid #5cb7dc99; border-radius: 7px; color: #eefaff; background: #19334be8; font: 10px Arial; padding: 3px; }
-  #touch-actions button:active { background: #397e9c; }
-  #audio-panel { left: 8px; right: 8px; top: 6px; bottom: auto; padding: 5px; font-size: 11px; }
-  #audio-panel button { padding: 5px; margin-left: 3px; font-size: 10px; touch-action: manipulation; }
-  body.input-touch #hud { top: 48px; left: 8px; right: 8px; padding: 5px; max-width: none; max-height: 46px; overflow: hidden; font-size: 10px; }
-  @media (max-height: 450px) {
-    #touch-look { top: 76px; bottom: 166px; }
-    #touch-actions button { min-height: 32px; }
-    body.input-touch #hud { max-height: 22px; }
-  }
+#mobile-controls { display:none; position:fixed; inset:0; z-index:15; pointer-events:none; user-select:none; -webkit-user-select:none; --stick-size:clamp(88px,27vw,120px); }
+body.input-touch:not(.immersive) #mobile-controls { display:block; }
+#mobile-controls button, #touch-move, #touch-look { pointer-events:auto; touch-action:none; -webkit-tap-highlight-color:transparent; }
+#touch-look { position:absolute; inset:0 0 0 39%; z-index:0; }
+#touch-move { position:absolute; left:12px; bottom:calc(24px + env(safe-area-inset-bottom,0px)); width:var(--stick-size); height:var(--stick-size); z-index:2; border:2px solid #a9d9ef88; border-radius:50%; background:#172c407a; display:grid; place-items:center; color:#c4dce988; font:10px Arial,sans-serif; box-sizing:border-box; }
+#touch-move i { position:absolute; width:38%; height:38%; border:1px solid #d5f4ffbb; border-radius:50%; background:#76b8d588; box-sizing:border-box; }
+#touch-actions { position:absolute; inset:0; pointer-events:none; z-index:2; }
+#touch-actions button { position:absolute; padding:4px; color:#f4fbff; background:#193b52db; border:2px solid #bddcea99; border-radius:50%; font:bold 11px Arial,sans-serif; box-shadow:0 2px 8px #0005; }
+#touch-actions button[data-action="primary"] { right:16px; bottom:calc(108px + env(safe-area-inset-bottom,0px)); width:76px; height:76px; background:#216b87e6; border-color:#94e7ff; }
+#touch-actions button[data-action="secondary"] { right:25px; bottom:calc(200px + env(safe-area-inset-bottom,0px)); width:58px; height:58px; font-size:9px; }
+#touch-actions button[data-action="jump"] { right:20px; bottom:calc(24px + env(safe-area-inset-bottom,0px)); width:64px; height:64px; }
+#touch-actions button[data-action="sprint"] { left:16px; bottom:calc(var(--stick-size) + 40px + env(safe-area-inset-bottom,0px)); width:82px; height:38px; border-radius:20px; font-size:10px; }
+#touch-actions button.active { background:#337b48e8; border-color:#b5f1bf; }
+#touch-actions button.aiming { background:#388dadf2; box-shadow:0 0 0 5px #9beaff33; }
+#touch-actions button:disabled { opacity:0.5; }
+#touch-hotbar { position:absolute; bottom:calc(20px + env(safe-area-inset-bottom,0px)); left:50%; transform:translateX(-50%); z-index:3; display:flex; gap:6px; padding:5px; border:1px solid #a3c3d666; border-radius:10px; background:#102434bf; }
+#touch-hotbar button { width:clamp(46px,13vw,64px); min-height:44px; border:2px solid #7894a8; border-radius:6px; background:#263f53; color:#e5f2fa; font:bold 9px Arial,sans-serif; padding:3px; }
+#touch-hotbar button[aria-pressed="true"] { border-color:#a6efff; background:#2c7188; box-shadow:inset 0 0 0 1px #b7f3ff; }
+#touch-hotbar button:disabled { opacity:0.6; }
+#touch-status { position:absolute; top:12px; left:12px; right:94px; z-index:1; color:#effaff; text-shadow:0 1px 3px #000; font:11px Arial,sans-serif; pointer-events:none; }
+body.input-touch #hud { display:none; }
+body.input-touch .a-enter-vr { top:58px; bottom:auto; right:calc(50% + 5px); }
+body.input-touch .a-enter-ar { top:58px; bottom:auto; right:calc(50% - 55px); }
+@media (max-height:450px) {
+  #mobile-controls { --stick-size:100px; }
+  #touch-move { bottom:16px; }
+  #touch-actions button[data-action="primary"] { bottom:94px; width:70px; height:70px; }
+  #touch-actions button[data-action="secondary"] { right:102px; bottom:104px; width:52px; height:52px; }
+  #touch-actions button[data-action="jump"] { bottom:16px; width:60px; height:60px; }
+  #touch-actions button[data-action="sprint"] { bottom:132px; }
+  #touch-hotbar { bottom:16px; }
 }
-
 
 #audio-panel { display:none !important; }
 #pause-launcher { position:fixed; top:10px; right:10px; z-index:25; padding:10px 18px; color:white; background:#22455e; border:1px solid #70c6e8; border-radius:8px; }
@@ -86,14 +96,6 @@ body.immersive #pause-launcher { display:none; }
 #pause-actions button { min-height:42px; background:#294c69; color:white; border:1px solid #6c9fbd; border-radius:7px; touch-action:manipulation; }
 #pause-help { white-space:pre-wrap; font:12px/1.5 Arial,sans-serif; }
 body.game-paused #mobile-controls { display:none !important; }
-#touch-actions .advanced-action { display:none; }
-#mobile-controls.advanced #touch-actions .advanced-action { display:block; }
-#touch-actions button.active { background:#337c49; border-color:#9de6a9; }
-@media (min-width:0px) {
- body.input-touch #hud { top:8px; right:90px; max-height:60px; }
- #touch-look { top:88px; bottom:150px; }
- #mobile-controls.advanced #touch-look { bottom:195px; }
-}
 
 
 #input-layout-settings { margin:14px 0 0; border:1px solid #6597b4; border-radius:7px; padding:10px; }
@@ -945,7 +947,7 @@ AFRAME.registerComponent('training-v4', {
           : 'READY';
 
     const status =
-      'WRIST LAB v6.2.3 | ' +
+      'WRIST LAB v6.2.4 | ' +
       (vr ? 'VR' : 'DESKTOP') + '\n' +
       'Stamina ' +
       Math.ceil(this.stamina) +
@@ -2028,7 +2030,7 @@ AFRAME.registerComponent('ability-test', {
     const state = holding ? 'HOLD | Stamina ' + Math.ceil(training.stamina) + '/100 (grip costs 0)' : '';
     const knifeState = this.state === 'READY' && this.cooldown > 0 ? 'RECOVERING' : this.state;
     const cutter = this.el.components['plasma-cutter'];
-    let text = 'WRIST LAB v6.2.3 | ' + (cutter && cutter.active ?
+    let text = 'WRIST LAB v6.2.4 | ' + (cutter && cutter.active ?
       'CUTTER ' + cutter.state + (cutter.ignited ? ' ON' : ' OFF') +
       (cutter.guiding ? ' | TETHER -2/s' : '') +
       (cutter.state !== 'HELD' ? ' | ' + cutter.root.position.distanceTo(cutter.origin).toFixed(1) + 'm' : '') : 'KNIFE ' + knifeState);
@@ -2772,157 +2774,214 @@ AFRAME.registerComponent('plasma-cutter', {
 <script>
 AFRAME.registerComponent('touch-controls', {
   init: function () {
-    this.moveX = this.moveY = 0;
-    this.depthAxis = this.rollAxis = 0;
+    this.moveX = this.moveY = this.depthAxis = this.rollAxis = 0;
     this.moving = this.sprint = this.locked = false;
     this.releases = new Map();
-    this.axisHolds = {depth: new Map(), roll: new Map()};
+    this.primaryPointer = null;
     this.view = document.querySelector('#view');
+    this.rayOrigin = new THREE.Vector3();
+    this.rayDirection = new THREE.Vector3();
+    this.throwTarget = new THREE.Vector3();
     const container = document.createElement('div');
     container.id = 'mobile-controls';
-    container.innerHTML = '<div id="touch-look"><span>DRAG TO LOOK</span></div>' +
+    container.innerHTML = '<div id="touch-look" aria-label="Drag to look"></div>' +
       '<div id="touch-move" aria-label="Movement joystick"><span>MOVE</span><i></i></div>' +
-      '<div id="touch-actions"></div>';
+      '<div id="touch-actions"></div><div id="touch-hotbar" role="group" aria-label="Weapon selection"></div>' +
+      '<div id="touch-status" aria-live="polite"></div>';
     document.body.appendChild(container);
     this.container = container;
     this.knob = container.querySelector('#touch-move i');
-    const train = () => this.el.components['training-v4'];
-    const fx = () => this.el.components['ability-test'];
-    const cutter = () => this.el.components['plasma-cutter'];
+    this.status = container.querySelector('#touch-status');
     const prevent = event => { event.preventDefault(); event.stopPropagation(); };
-    const hold = (element, start) => {
+    const bind = (element, start) => {
       element.addEventListener('pointerdown', event => {
-        if (this.el.is('vr-mode')) return;
+        const pause = this.el.components['pause-menu'];
+        if (this.el.is('vr-mode') || (pause && pause.opened)) return;
         prevent(event);
         try { element.setPointerCapture(event.pointerId); } catch (error) {}
-        if (fx()) fx().unlockAudio();
-        const end = start(event) || (() => {});
-        if (this.el.components['pause-menu'] && this.el.components['pause-menu'].opened) { end(); return; }
-        this.releases.set(event.pointerId, end);
+        const fx = this.el.components['ability-test'];
+        if (fx) fx.unlockAudio();
+        const finish = start(event) || (() => {});
+        this.releases.set(event.pointerId, finish);
       });
-      ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(name => element.addEventListener(name, event => {
+      ['pointerup','pointercancel','lostpointercapture'].forEach(name => element.addEventListener(name, event => {
         prevent(event);
-        const end = this.releases.get(event.pointerId);
+        const finish = this.releases.get(event.pointerId);
         this.releases.delete(event.pointerId);
-        if (end) end();
+        if (finish) finish(name !== 'pointerup');
       }));
     };
     const move = container.querySelector('#touch-move');
     let movePointer = null;
     const updateMove = event => {
-      const box = move.getBoundingClientRect();
-      const radius = box.width * 0.36;
-      let x = event.clientX - (box.left + box.width / 2);
-      let y = event.clientY - (box.top + box.height / 2);
-      const length = Math.hypot(x, y);
-      if (length > radius) { x *= radius / length; y *= radius / length; }
-      this.moveX = x / radius; this.moveY = y / radius;
+      const rect = move.getBoundingClientRect(), radius = rect.width * 0.36;
+      let x = event.clientX - rect.left - rect.width / 2;
+      let y = event.clientY - rect.top - rect.height / 2;
+      const length = Math.hypot(x,y);
+      if (length > radius) { x *= radius/length; y *= radius/length; }
+      this.moveX = x/radius; this.moveY = y/radius;
       this.knob.style.transform = 'translate(' + x + 'px,' + y + 'px)';
     };
-    hold(move, event => {
+    bind(move,event => {
       if (movePointer !== null) return;
       movePointer = event.pointerId; this.moving = true; updateMove(event);
       return () => { movePointer = null; this.moving = false; this.moveX = this.moveY = 0; this.knob.style.transform = ''; };
     });
-    move.addEventListener('pointermove', event => { if (event.pointerId === movePointer) { prevent(event); updateMove(event); } });
+    move.addEventListener('pointermove',event => {
+      if (event.pointerId === movePointer) { prevent(event); updateMove(event); }
+    });
     const look = container.querySelector('#touch-look');
-    let lookPointer = null, lastX = 0, lastY = 0;
-    hold(look, event => {
+    let lookPointer = null, lookX = 0, lookY = 0;
+    bind(look,event => {
       if (lookPointer !== null) return;
-      lookPointer = event.pointerId; lastX = event.clientX; lastY = event.clientY;
+      lookPointer = event.pointerId; lookX = event.clientX; lookY = event.clientY;
       return () => { lookPointer = null; };
     });
-    look.addEventListener('pointermove', event => {
+    look.addEventListener('pointermove',event => {
       if (event.pointerId !== lookPointer) return;
-      prevent(event);
-      const controls = this.view.components['look-controls'];
-      if (controls && controls.yawObject && controls.pitchObject) {
-        controls.yawObject.rotation.y -= (event.clientX - lastX) * 0.004;
-        controls.pitchObject.rotation.x = THREE.MathUtils.clamp(
-          controls.pitchObject.rotation.x - (event.clientY - lastY) * 0.004,
-          -Math.PI * 0.49, Math.PI * 0.49);
-      }
-      lastX = event.clientX; lastY = event.clientY;
+      prevent(event); this.dragLook(event.clientX-lookX,event.clientY-lookY);
+      lookX = event.clientX; lookY = event.clientY;
     });
-    const add = (label, id, action) => {
+    const add = (label,id,action,parent) => {
       const button = document.createElement('button');
       button.type = 'button'; button.textContent = label; button.dataset.action = id;
-      hold(button, action);
-      container.querySelector('#touch-actions').appendChild(button);
+      bind(button,action); (parent || container.querySelector('#touch-actions')).appendChild(button);
       return button;
     };
-    add('Fire / Guide', 'fire', () => {
-      this.locked = false;
-      if (fx()) fx().requestPrimary();
-      return () => { if (cutter()) cutter().endPress(); };
+    this.primaryButton = add('THROW','primary',event => {
+      if (this.primaryPointer !== null) return;
+      const id = event.pointerId;
+      this.primaryPointer = id; this.aimX = event.clientX; this.aimY = event.clientY;
+      this.primaryButton.classList.add('aiming');
+      return cancelled => {
+        if (this.primaryPointer !== id) return;
+        this.primaryPointer = null; this.primaryButton.classList.remove('aiming');
+        if (!cancelled) this.primaryAction();
+      };
     });
-    add('Retrieve', 'retrieve', () => { this.locked = false; if (cutter()) cutter().recall('TOUCH RETRIEVE'); });
-    add('Equip', 'equip', () => { this.locked = false; if (cutter()) cutter().toggleEquip(); });
-    add('Blade', 'blade', () => { if (cutter()) cutter().toggleBlade(); });
-    add('Swing / Punch', 'swing', () => { if (train()) train().desktopPunch(); });
-    add('Jump', 'jump', () => { if (train()) train().jump(); });
-    this.sprintButton = add('Sprint OFF', 'sprint', () => { this.sprint = !this.sprint; });
-    add('Pause', 'pause', () => this.el.components['pause-menu'].toggle());
-    add('Depth +', 'depth-plus', event => this.holdAxis('depth', event.pointerId, 1));
-    add('Depth -', 'depth-minus', event => this.holdAxis('depth', event.pointerId, -1));
-    add('Roll -', 'roll-minus', event => this.holdAxis('roll', event.pointerId, -1));
-    add('Roll +', 'roll-plus', event => this.holdAxis('roll', event.pointerId, 1));
-    this.lockButton = add('Tether lock', 'tether', () => {
-      const c = cutter();
-      if (!c || !c.active) return;
-      if (this.locked) { c.endPress(); this.locked = false; }
-      else { this.locked = true; fx().requestPrimary(); }
+    this.primaryButton.setAttribute('aria-label','Drag to aim, release for primary weapon action');
+    this.primaryButton.addEventListener('pointermove',event => {
+      if (event.pointerId !== this.primaryPointer) return;
+      prevent(event); this.dragLook(event.clientX-this.aimX,event.clientY-this.aimY);
+      this.aimX = event.clientX; this.aimY = event.clientY;
     });
-    this.moreButton = add('More', 'more', () => {
-      this.container.classList.toggle('advanced');
-    });
-    add('Launch', 'launch', () => { this.locked = false; if (cutter()) cutter().launchAlongAim(); });
-    ['depth-plus', 'depth-minus', 'roll-minus', 'roll-plus', 'launch'].forEach(id => {
-      container.querySelector('[data-action="' + id + '"]').classList.add('advanced-action');
-    });
-    container.addEventListener('contextmenu', prevent);
-    container.addEventListener('keydown', event => event.stopPropagation());
+    this.secondaryButton = add('PUNCH','secondary',() => this.secondaryAction());
+    add('JUMP','jump',() => this.el.components['training-v4'].jump());
+    this.sprintButton = add('SPRINT','sprint',() => { this.sprint = !this.sprint; });
+    const bar = container.querySelector('#touch-hotbar');
+    this.knifeSlot = add('KNIFE','knife',() => this.selectItem('knife'),bar);
+    this.cutterSlot = add('CUTTER','cutter',() => this.selectItem('cutter'),bar);
+    container.addEventListener('contextmenu',prevent);
+    container.addEventListener('keydown',event => event.stopPropagation());
     const clear = () => this.clear();
-    window.addEventListener('blur', clear);
-    window.addEventListener('resize', clear);
-    window.addEventListener('orientationchange', clear);
-    document.addEventListener('visibilitychange', clear);
-    this.el.addEventListener('enter-vr', clear);
-    // Touch camera input is handled by our look area, not twice by look-controls.
-    this.view.setAttribute('look-controls', 'magicWindowTrackingEnabled', false);
-    if (window.matchMedia('(any-pointer: coarse)').matches)
-      this.view.setAttribute('look-controls', 'touchEnabled', false);
+    window.addEventListener('blur',clear);
+    window.addEventListener('resize',clear);
+    window.addEventListener('orientationchange',clear);
+    document.addEventListener('visibilitychange',clear);
+    this.el.addEventListener('enter-vr',clear);
+    this.view.setAttribute('look-controls','magicWindowTrackingEnabled',false);
+    this.view.setAttribute('look-controls','touchEnabled',false);
+    this.tick();
   },
 
-  holdAxis: function (name, id, value) {
-    const map = this.axisHolds[name];
-    const update = () => {
-      this[name + 'Axis'] = THREE.MathUtils.clamp(Array.from(map.values()).reduce((sum, item) => sum + item, 0), -1, 1);
-    };
-    map.set(id, value); update();
-    return () => { map.delete(id); update(); };
+  dragLook: function (dx,dy) {
+    if (this.el.is('vr-mode')) return;
+    const pause = this.el.components['pause-menu'];
+    if (pause && pause.opened) return;
+    const controls = this.view.components['look-controls'];
+    if (!controls || !controls.yawObject || !controls.pitchObject) return;
+    controls.yawObject.rotation.y -= dx * 0.004;
+    controls.pitchObject.rotation.x = THREE.MathUtils.clamp(
+      controls.pitchObject.rotation.x - dy * 0.004, -85*Math.PI/180,85*Math.PI/180);
+  },
+
+  canSelect: function () {
+    const fx = this.el.components['ability-test'], cutter = this.el.components['plasma-cutter'];
+    return !!fx && !!cutter && fx.state === 'READY' && fx.cooldown <= 0 && cutter.state === 'HELD' && cutter.cooldown <= 0;
+  },
+
+  selectItem: function (item) {
+    const cutter = this.el.components['plasma-cutter'];
+    if (!cutter || !this.canSelect()) return;
+    this.primaryPointer = null; this.primaryButton.classList.remove('aiming');
+    const wantCutter = item === 'cutter';
+    if (cutter.active !== wantCutter) cutter.toggleEquip();
+    // Mobile selects a ready-to-use blade instead of requiring another power button.
+    if (wantCutter && cutter.active && !cutter.ignited) cutter.toggleBlade();
+    this.tick();
+  },
+
+  primaryAction: function () {
+    const pause = this.el.components['pause-menu'];
+    if (this.el.is('vr-mode') || (pause && pause.opened)) return;
+    const fx = this.el.components['ability-test'], cutter = this.el.components['plasma-cutter'];
+    if (!fx || !cutter) return;
+    fx.unlockAudio();
+    if (!cutter.active) { fx.throwKnife(); return; }
+    if (cutter.state === 'RETURNING' || cutter.cooldown > 0) return;
+    if (!cutter.ignited) { cutter.toggleBlade(); return; }
+    if (cutter.bladeAmount < 0.9) return;
+    cutter.clearTrigger(); cutter.lastTapAt = -100;
+    if (cutter.state === 'HELD') {
+      // Existing throw, with a phone-only speed: about 5m before the normal hover.
+      fx.throwKnife();
+      if (cutter.state === 'OUTBOUND') cutter.launchSpeed = 10;
+    } else {
+      if (cutter.safetyReturn || !fx.readAim(this.rayOrigin,this.rayDirection)) return;
+      this.throwTarget.copy(this.rayOrigin).addScaledVector(this.rayDirection,10);
+      cutter.direction.copy(this.throwTarget).sub(cutter.root.position);
+      if (cutter.direction.lengthSq() < 0.0001) return;
+      cutter.direction.normalize(); cutter.launchSpeed = 10; cutter.launchRemote();
+    }
+  },
+
+  secondaryAction: function () {
+    const pause = this.el.components['pause-menu'];
+    if (this.el.is('vr-mode') || (pause && pause.opened)) return;
+    const cutter = this.el.components['plasma-cutter'], training = this.el.components['training-v4'];
+    if (!cutter || !training) return;
+    if (cutter.active && cutter.state !== 'HELD') {
+      if (cutter.state !== 'RETURNING') cutter.recall('TOUCH RETRIEVE');
+    } else training.desktopPunch();
   },
 
   clear: function () {
-    this.releases.forEach(end => end());
-    this.releases.clear();
+    this.releases.forEach(finish => finish(true)); this.releases.clear();
+    this.primaryPointer = null;
     this.moveX = this.moveY = this.depthAxis = this.rollAxis = 0;
     this.moving = this.sprint = this.locked = false;
     if (this.knob) this.knob.style.transform = '';
+    if (this.primaryButton) this.primaryButton.classList.remove('aiming');
     const cutter = this.el.components['plasma-cutter'];
-    if (cutter) cutter.endPress();
+    if (cutter) { cutter.clearTrigger(); if (cutter.state === 'CONTROLLED') cutter.hover(false); }
   },
 
   tick: function () {
-    const cutter = this.el.components['plasma-cutter'];
-    if (this.locked && (!cutter || !cutter.triggerHeld || !cutter.active)) this.locked = false;
+    const cutter = this.el.components['plasma-cutter'], fx = this.el.components['ability-test'];
     const training = this.el.components['training-v4'];
-    if (training && training.exhausted) this.sprint = false;
-    const text = this.locked ? 'Park blade' : 'Tether lock';
-    if (this.lockButton.textContent !== text) this.lockButton.textContent = text;
-    const sprintText = this.sprint ? 'Sprint ON' : 'Sprint OFF';
+    if (!cutter || !fx || !training) return;
+    if (training.exhausted) this.sprint = false;
+    const selected = cutter.active, away = selected && cutter.state !== 'HELD';
+    const returning = selected && cutter.state === 'RETURNING';
+    const warming = selected && cutter.ignited && cutter.bladeAmount < 0.9;
+    const recovering = selected ? cutter.cooldown > 0 : fx.state !== 'READY' || fx.cooldown > 0;
+    const primary = this.primaryPointer !== null ? 'RELEASE' : returning || recovering ? 'WAIT' :
+      selected && !cutter.ignited ? 'IGNITE' : warming ? 'READYING' : away ? 'LAUNCH' : 'THROW';
+    const secondary = away ? (returning ? 'RETURNING' : 'RETRIEVE') : selected ? 'SWING' : 'PUNCH';
+    if (this.primaryButton.textContent !== primary) this.primaryButton.textContent = primary;
+    if (this.secondaryButton.textContent !== secondary) this.secondaryButton.textContent = secondary;
+    this.primaryButton.disabled = returning || warming || (selected ? cutter.cooldown > 0 : fx.state !== 'READY' || fx.cooldown > 0);
+    this.secondaryButton.disabled = returning || (selected && !away && (!cutter.ignited || warming || cutter.cooldown > 0));
+    this.knifeSlot.disabled = this.cutterSlot.disabled = !this.canSelect();
+    this.knifeSlot.setAttribute('aria-pressed',String(!selected));
+    this.cutterSlot.setAttribute('aria-pressed',String(selected));
+    const sprintText = this.sprint ? 'SPRINT ON' : 'SPRINT';
     if (this.sprintButton.textContent !== sprintText) this.sprintButton.textContent = sprintText;
-    this.sprintButton.classList.toggle('active', this.sprint);
+    this.sprintButton.classList.toggle('active',this.sprint);
+    this.sprintButton.setAttribute('aria-pressed',String(this.sprint));
+    const status = 'v6.2.4 | ' + (selected ? 'CUTTER' : 'KNIFE') + (away ? ' - ' + cutter.state : '') +
+      ' | ' + Math.ceil(training.stamina) + '%';
+    if (this.status.textContent !== status) this.status.textContent = status;
   }
 });
 </script>
@@ -3037,7 +3096,7 @@ AFRAME.registerComponent('pause-menu', {
   toggle: function () { this.setOpen(!this.opened); },
 
   help: function () {
-    return 'QUEST\nLeft stick: move | Right stick: turn\nSprint works in every movement direction\nA: jump / ledge launch | Grips: climb\nR-stick UP: equip | DOWN: blade power\nTrigger hold: manipulate | Gentle release: hover\nThrow motion + release: launch along hand motion\nTwo quick trigger taps: retrieve\nR-stick click: pause / resume\nAim/grip hints: pause menu\nEmpty left wrist + look 0.8s: pause\n\nPHONE\nMove pad + drag Look; Sprint toggles\nTether lock frees your fingers; More: depth / roll / launch\n\nDESKTOP\nWASD move | Arrows look | Space jump | Shift sprint\nC equip | V blade | E tether | G retrieve\nI/K depth | J/L roll | Click swing\nP / Escape: pause\n\nTether costs 2 stamina/s; hover and retrieval are free.\nObject transfer and left-trigger ownership are not in this build yet.';
+    return 'QUEST\nLeft stick: move | Right stick: turn\nSprint works in every movement direction\nA: jump / ledge launch | Grips: climb\nR-stick UP: equip | DOWN: blade power\nTrigger hold: manipulate | Gentle release: hover\nThrow motion + release: launch along hand motion\nTwo quick trigger taps: retrieve\nR-stick click: pause / resume\nAim/grip hints: pause menu\nEmpty left wrist + look 0.8s: pause\n\nPHONE\nMove pad + drag to look; Sprint toggles\nHotbar: Knife/Cutter | Drag THROW to aim\nSecondary: Swing/Punch or Retrieve\n\nDESKTOP\nWASD move | Arrows look | Space jump | Shift sprint\nC equip | V blade | E tether | G retrieve\nI/K depth | J/L roll | Click swing\nP / Escape: pause\n\nTether costs 2 stamina/s; hover and retrieval are free.\nObject transfer and left-trigger ownership are not in this build yet.';
   },
 
   setOpen: function (value) {
@@ -3315,7 +3374,7 @@ AFRAME.registerComponent('input-layout', {
 
 <body>
 
-<div id="hud">Loading Wrist Lab v6.2.3...</div>
+<div id="hud">Loading Wrist Lab v6.2.4...</div>
 <div id="crosshair">+</div>
 
 <a-scene
@@ -3433,7 +3492,7 @@ AFRAME.registerComponent('input-layout', {
     align="center"
     width="4"
     color="white"
-    value="DESCENT VR\nWRIST LAB v6.2.3">
+    value="DESCENT VR\nWRIST LAB v6.2.4">
   </a-text>
 
   <!-- Practice target -->
