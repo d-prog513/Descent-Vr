@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Descent VR - Wrist Lab v6.2.9</title>
+<title>Descent VR - Wrist Lab v6.2.10</title>
 <script src="https://aframe.io/releases/1.8.0/aframe.min.js"></script>
 
 <style>
@@ -949,7 +949,7 @@ AFRAME.registerComponent('training-v4', {
           : 'READY';
 
     const status =
-      'WRIST LAB v6.2.9 | ' +
+      'WRIST LAB v6.2.10 | ' +
       (vr ? 'VR' : 'DESKTOP') + '\n' +
       'Stamina ' +
       Math.ceil(this.stamina) +
@@ -1328,7 +1328,7 @@ AFRAME.registerComponent('ledge-climb', {
         Math.abs(this.head.z - ledge.z) <
           ledge.depth / 2 + 0.65;
 
-      if (highEnough && nearLedge) {
+      if (highEnough && nearLedge && !ledge.noMantle) {
         const finishX = THREE.MathUtils.clamp(
           this.head.x,
           ledge.x - ledge.width / 2 + 0.3,
@@ -2108,7 +2108,7 @@ AFRAME.registerComponent('ability-test', {
     const state = holding ? 'HOLD | Stamina ' + Math.ceil(training.stamina) + '/100 (grip costs 0)' : '';
     const knifeState = this.state === 'READY' && this.cooldown > 0 ? 'RECOVERING' : this.state;
     const cutter = this.el.components['plasma-cutter'];
-    let text = 'WRIST LAB v6.2.9 | ' + (cutter && cutter.active ?
+    let text = 'WRIST LAB v6.2.10 | ' + (cutter && cutter.active ?
       'CUTTER ' + (cutter.owningHand || 'right').toUpperCase() + ' ' + cutter.state + (cutter.ignited ? ' ON' : ' OFF') +
       (cutter.guiding ? ' | TETHER -2/s' : '') +
       (cutter.state !== 'HELD' ? ' | ' + cutter.root.position.distanceTo(cutter.origin).toFixed(1) + 'm' : '') : 'KNIFE ' + knifeState);
@@ -2247,6 +2247,17 @@ AFRAME.registerComponent('plasma-cutter', {
     this.root.add(this.beam);
     this.root.visible = false;
     this.el.object3D.add(this.root);
+    this.anchorVisual = document.createElement('a-box');
+    this.anchorVisual.setAttribute('width',0.30);
+    this.anchorVisual.setAttribute('height',0.06);
+    this.anchorVisual.setAttribute('depth',0.30);
+    this.anchorVisual.setAttribute('color','#53e5c2');
+    this.anchorVisual.setAttribute('material',{shader:'flat',opacity:0.65,transparent:true});
+    this.anchorVisual.object3D.visible = false;
+    this.el.appendChild(this.anchorVisual);
+    this.anchorLedge = {x:0,z:0,top:0,width:0.30,depth:0.30,color:'#53e5c2',
+      mesh:this.anchorVisual,dynamicWeapon:true,noMantle:true};
+    this.anchorLive = false;
 
     this.right.addEventListener('thumbstickmoved', event => {
       if (!this.el.is('vr-mode')) return;
@@ -2257,6 +2268,9 @@ AFRAME.registerComponent('plasma-cutter', {
       this.stickReady = false;
       if (y < 0) this.toggleEquip();
       else this.toggleBlade();
+    });
+    this.right.addEventListener('bbuttondown', () => {
+      if (this.el.is('vr-mode')) this.toggleAnchor();
     });
     [this.right, this.left].forEach(hand => {
       hand.addEventListener('gripdown', () => {
@@ -2273,7 +2287,7 @@ AFRAME.registerComponent('plasma-cutter', {
         if (!this.el.is('vr-mode') || !this.active || hand !== this.owner() || (menu && menu.opened)) return;
         const fx = this.feedback();
         fx.unlockAudio();
-        if (!fx.readAim(this.origin, this.aim, this.owningHand)) { this.cancel(); return; }
+        if (!fx.readAim(this.origin, this.aim, this.owningHand)) { if (!this.anchorLive) this.cancel(); return; }
         this.beginPress(); this.primaryAction(this.origin, this.aim);
       });
       hand.addEventListener('triggerup', () => { if (hand === this.owner()) this.endPress(); });
@@ -2287,6 +2301,7 @@ AFRAME.registerComponent('plasma-cutter', {
       if (event.target.closest && event.target.closest('input,textarea,[contenteditable],button')) return;
       if (event.code === 'KeyC') { event.preventDefault(); this.toggleEquip(); }
       if (event.code === 'KeyV') { event.preventDefault(); this.toggleBlade(); }
+      if (event.code === 'KeyO') { event.preventDefault(); this.toggleAnchor(); }
     });
     window.addEventListener('keydown', event => {
       if (this.el.is('vr-mode') || (event.target.closest && event.target.closest('input,textarea,[contenteditable],button'))) return;
@@ -2335,6 +2350,85 @@ AFRAME.registerComponent('plasma-cutter', {
     if (this.ownerMarker) this.ownerMarker.material.color.setHex(this.owningHand === 'left' ? 0x8eafff : 0xffba55);
     this.feedback().playEffect('catch');
     this.message('CUTTER -> ' + this.owningHand.toUpperCase() + ' HAND - release grips; this hand owns tether');
+    return true;
+  },
+
+  anchorHeld: function () {
+    const climbing = this.el.components['ledge-climb'];
+    return !!climbing && climbing.hands.some(hand => hand.grabbing && hand.ledge === this.anchorLedge);
+  },
+
+  toggleAnchor: function () {
+    const menu = this.el.components['pause-menu'];
+    if (document.hidden || (menu && menu.opened) || !this.active) return;
+    if (this.anchorLive) {
+      if (!this.removeAnchor(false)) return;
+      this.state = 'HOVER';
+      this.remoteHistory = false;
+      this.message('ANCHOR RELEASED - blade stays off; trigger to tether or retrieve');
+    } else this.placeAnchor();
+  },
+
+  placeAnchor: function () {
+    const training = this.el.components['training-v4'], climbing = this.el.components['ledge-climb'];
+    const fx = this.feedback(), menu = this.el.components['pause-menu'];
+    if (!this.active || this.anchorLive || document.hidden || (menu && menu.opened) ||
+        !training || !climbing || !climbing.routeBuilt || !fx || this.cooldown > 0 ||
+        this.state === 'RETURNING' || climbing.hands.some(hand => hand.grabbing)) return false;
+    if (!['HELD','HOVER','CONTROLLED','OUTBOUND'].includes(this.state)) return false;
+    if (this.state === 'HELD') {
+      if (!fx.readAim(this.origin,this.aim,this.owningHand)) return false;
+      this.root.position.copy(this.origin);
+      if (this.el.is('vr-mode')) this.root.quaternion.setFromRotationMatrix(fx.aimMatrix).normalize();
+      else {
+        this.view.object3D.getWorldQuaternion(this.quaternion);
+        this.offset.set(0.22,-0.20,-0.18).applyQuaternion(this.quaternion);
+        this.root.position.add(this.offset); this.root.quaternion.copy(this.quaternion);
+      }
+    }
+    if (this.root.position.y < 0.20 || Number.isFinite(fx.blockingDistance(this.root.position,this.up,0.08,training))) {
+      this.message('Move cutter clear of floor, wall or platform before anchoring'); return false;
+    }
+    this.clearTrigger();
+    fx.throwRequested = false;
+    this.state = 'ANCHORED';
+    this.ignited = false; this.bladeAmount = 0; this.beam.visible = false;
+    this.rebounding = this.canRebound = false;
+    this.historyReady = this.remoteHistory = false;
+    this.velocity.set(0,0,0); this.stopHum();
+    this.anchorLedge.x = this.root.position.x;
+    this.anchorLedge.z = this.root.position.z;
+    this.anchorLedge.top = this.root.position.y;
+    this.anchorVisual.setAttribute('position',{x:this.anchorLedge.x,y:this.anchorLedge.top-0.03,z:this.anchorLedge.z});
+    this.anchorVisual.setAttribute('color',this.anchorLedge.color);
+    this.anchorVisual.object3D.visible = true;
+    this.root.visible = true;
+    if (!climbing.ledges.includes(this.anchorLedge)) climbing.ledges.push(this.anchorLedge);
+    this.anchorLive = true;
+    fx.playEffect('catch');
+    this.message('CUTTER ANCHORED - grip mint pad, pull to climb; A launches; B releases when clear');
+    return true;
+  },
+
+  removeAnchor: function (force) {
+    if (!this.anchorLive) return true;
+    const climbing = this.el.components['ledge-climb'], training = this.el.components['training-v4'];
+    if (this.anchorHeld()) {
+      if (!force) { this.clearTrigger(); this.message('Release the cutter climbing hold before moving or retrieving it'); return false; }
+      climbing.releaseAll();
+      if (training) { training.velocityY = 0; training.grounded = false; }
+    }
+    if (climbing) {
+      const index = climbing.ledges.indexOf(this.anchorLedge);
+      if (index >= 0) climbing.ledges.splice(index,1);
+      if (climbing.ledge === this.anchorLedge) {
+        climbing.wasClimbing = false;
+        const fallback = climbing.ledges.find(ledge => !ledge.dynamicWeapon);
+        if (fallback) { climbing.ledge = fallback; climbing.mesh = fallback.mesh; }
+      }
+    }
+    this.anchorLive = false;
+    this.anchorVisual.object3D.visible = false;
     return true;
   },
 
@@ -2535,6 +2629,10 @@ AFRAME.registerComponent('plasma-cutter', {
   },
 
   primaryAction: function (origin, direction) {
+    if (this.anchorLive) {
+      if (!this.removeAnchor(false)) return;
+      this.state = 'HOVER'; this.remoteHistory = false;
+    }
     if (!this.active || (this.clock < this.primaryBlockedUntil && this.state === 'HELD')) return;
     if (this.state !== 'HELD') {
       if (this.safetyReturn) { this.clearTrigger(); return; }
@@ -2584,6 +2682,7 @@ AFRAME.registerComponent('plasma-cutter', {
   },
 
   recall: function (text, safety) {
+    if (this.anchorLive && !this.removeAnchor(false)) return;
     if (!this.active || this.state === 'HELD') return;
     const starting = this.state !== 'RETURNING';
     this.primaryBlockedUntil = this.clock + 0.09;
@@ -2610,6 +2709,7 @@ AFRAME.registerComponent('plasma-cutter', {
   },
 
   cancel: function () {
+    this.removeAnchor(true);
     this.state = 'HELD';
     this.rebounding = false;
     this.canRebound = false;
@@ -3010,6 +3110,10 @@ AFRAME.registerComponent('plasma-cutter', {
       this.stopHum();
       return;
     }
+    if (this.anchorLive) {
+      this.root.visible = true; this.beam.visible = false;
+      this.gripThrowArmed = false; this.stopHum(); return;
+    }
     if (!fx.readAim(this.origin, this.aim, this.owningHand)) { this.cancel(); return; }
     if (this.tryHandoff() && !fx.readAim(this.origin, this.aim, this.owningHand)) { this.cancel(); return; }
     const vr = this.el.is('vr-mode');
@@ -3259,7 +3363,7 @@ AFRAME.registerComponent('touch-controls', {
     if (this.sprintButton.textContent !== sprintText) this.sprintButton.textContent = sprintText;
     this.sprintButton.classList.toggle('active',this.sprint);
     this.sprintButton.setAttribute('aria-pressed',String(this.sprint));
-    const status = 'v6.2.9 | ' + (selected ? 'CUTTER' : 'KNIFE') + (away ? ' - ' + cutter.state : '') +
+    const status = 'v6.2.10 | ' + (selected ? 'CUTTER' : 'KNIFE') + (away ? ' - ' + cutter.state : '') +
       ' | ' + Math.ceil(training.stamina) + '%';
     if (this.status.textContent !== status) this.status.textContent = status;
   }
@@ -3376,7 +3480,7 @@ AFRAME.registerComponent('pause-menu', {
   toggle: function () { this.setOpen(!this.opened); },
 
   help: function () {
-    return 'QUEST\nLeft stick: move | Right stick: turn\nSprint works in every movement direction\nA: jump / ledge launch | Grips: climb\nR-stick UP: equip | DOWN: blade power\nCutter: holding grip + swing + release throws\nHands close + both grips: handoff\nHolding-hand trigger: tether | R-trigger: knife\nRelease trigger: hover | Grip during tether: park\nTwo quick trigger taps: retrieve\nR-stick click: pause / resume\nAim/grip hints: pause menu\nEmpty left wrist + look 0.8s: pause\n\nPHONE\nMove pad + drag to look; Sprint toggles\nHotbar: Knife/Cutter | Drag THROW to aim\nSecondary: Swing/Punch or Retrieve\n\nDESKTOP\nWASD move | Arrows look | Space jump | Shift sprint\nC equip | V blade | E tether | G retrieve\nI/K depth | J/L roll | Click swing\nP / Escape: pause\n\nTether costs 2 stamina/s; hover and retrieval are free.\nObject transfer and left-trigger ownership are not in this build yet.';
+    return 'QUEST\nLeft stick: move | Right stick: turn\nSprint works in every movement direction\nA: jump / ledge launch | Grips: climb\nR-stick UP: equip | DOWN: blade power\nCutter: holding grip + swing + release throws\nHands close + both grips: handoff\nB: anchor cutter / release when clear\nHolding-hand trigger: tether | R-trigger: knife\nRelease trigger: hover | Grip during tether: park\nTwo quick trigger taps: retrieve\nR-stick click: pause / resume\nAim/grip hints: pause menu\nEmpty left wrist + look 0.8s: pause\n\nPHONE\nMove pad + drag to look; Sprint toggles\nHotbar: Knife/Cutter | Drag THROW to aim\nSecondary: Swing/Punch or Retrieve\n\nDESKTOP\nWASD move | Arrows look | Space jump | Shift sprint\nC equip | V blade | E tether | G retrieve | O anchor\nI/K depth | J/L roll | Click swing\nP / Escape: pause\n\nTether costs 2 stamina/s; hover and retrieval are free.\nObject transfer and left-trigger ownership are not in this build yet.';
   },
 
   setOpen: function (value) {
@@ -3654,7 +3758,7 @@ AFRAME.registerComponent('input-layout', {
 
 <body>
 
-<div id="hud">Loading Wrist Lab v6.2.9...</div>
+<div id="hud">Loading Wrist Lab v6.2.10...</div>
 <div id="crosshair">+</div>
 
 <a-scene
@@ -3773,7 +3877,7 @@ AFRAME.registerComponent('input-layout', {
     align="center"
     width="4"
     color="white"
-    value="DESCENT VR\nWRIST LAB v6.2.9">
+    value="DESCENT VR\nWRIST LAB v6.2.10">
   </a-text>
 
   <!-- Practice target -->
